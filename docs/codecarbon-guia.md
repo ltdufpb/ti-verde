@@ -106,4 +106,7 @@ Após a execução, é gerado um arquivo `.csv` com diversas informações. Abai
 |energy_consumed|Energia total gasta em kWh|
 |country_name|País onde a medição foi feita|
 
+### Qual a diferença entre o modo offline e online?
+A versão offline é utilizada em ambientes sem acesso à internet, mas as formas de utilizar o CodeCarbon permanecem inalteradas com exceção que se faz necessário o uso do parâmetro `country_iso_code` que representa o código ISO do país onde a infraestrutura está hospedada.
+
 > **Observação importante:** durante os testes, o CodeCarbon conseguiu acessar os valores reais do consumo de energia nativamente no Linux. No Windows, sem configuração adicional, a biblioteca funcionou através de estimativas. Portanto, recomendamos trabalhar com ele no Linux para maior precisão.
