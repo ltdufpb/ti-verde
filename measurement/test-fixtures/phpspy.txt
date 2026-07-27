@@ -1,0 +1,26 @@
+0 isPrimeSlow /app/index.php:20
+1 calculatePrimeChecksumSlow /app/index.php:50
+2 executeCpuWorkload /app/index.php:100
+3 <main> /app/index.php:200
+# trace_ts = 1000.250000
+# pid = 123
+# - - - - -
+0 isPrimeSlow /app/index.php:20
+1 calculatePrimeChecksumSlow /app/index.php:50
+2 executeCpuWorkload /app/index.php:100
+3 <main> /app/index.php:200
+# trace_ts = 1000.750000
+# pid = 123
+# - - - - -
+0 countWordsSlow /app/index.php:80
+1 executeTextWorkload /app/index.php:120
+2 <main> /app/index.php:200
+# trace_ts = 1001.250000
+# pid = 123
+# - - - - -
+0 countWordsSlow /app/index.php:80
+1 executeTextWorkload /app/index.php:120
+2 <main> /app/index.php:200
+# trace_ts = 1001.750000
+# pid = 123
+# - - - - -

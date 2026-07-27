@@ -1,0 +1,11 @@
+<main>;executeMixedWorkload;executeTextWorkload;countWordsSlow 3134736
+<main>;executeMixedWorkload;executeCpuWorkload;calculatePrimeChecksumSlow;isPrimeSlow 1002400
+<main>;executeMixedWorkload;executeTextWorkload 128888
+<main>;executeMixedWorkload;executeTextWorkload;countWordsSlow;normalizeSentence;array_filter;{closure:normalizeSentence():131} 84162
+<main>;executeMixedWorkload;executeTextWorkload;countWordsSlow;normalizeSentence;array_filter 45417
+<main>;executeMixedWorkload;executeTextWorkload;countWordsSlow;normalizeSentence;preg_split 39310
+<main>;executeMixedWorkload;executeTextWorkload;countWordsSlow;array_unique 39310
+<main>;executeMixedWorkload;executeTextWorkload;countWordsSlow;normalizeSentence;preg_replace 36285
+<main>;executeMixedWorkload;executeTextWorkload;buildTextCorpus 33101
+<main>;executeMixedWorkload;executeCpuWorkload;calculatePrimeChecksumSlow 27558
+[unattributed: no PHP stack sample] 23898

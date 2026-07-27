@@ -1,0 +1,7 @@
+{
+  "successful_requests": 4,
+  "dropped_iterations": 0,
+  "request_duration_ms": {
+    "p95": 100
+  }
+}

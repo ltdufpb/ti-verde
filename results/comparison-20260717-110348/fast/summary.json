@@ -1,0 +1,181 @@
+{
+  "measurement_window": {
+    "start_timestamp": 1784297202.0802753,
+    "end_timestamp": 1784297262.4375985,
+    "duration_seconds": 60.35732316970825,
+    "target_pid": 6535
+  },
+  "workload": {
+    "implementation": "fast",
+    "workload": "mixed",
+    "scale": 1,
+    "rate_requests_per_second": 2,
+    "configured_duration_seconds": 60,
+    "http_requests": 120,
+    "successful_requests": 120,
+    "failed_requests": 0,
+    "dropped_iterations": 0,
+    "failure_rate": 0,
+    "checks_rate": 1,
+    "request_duration_ms": {
+      "average": 1.238008808333333,
+      "median": 0.96414,
+      "p90": 1.3303600000000002,
+      "p95": 1.524549,
+      "max": 8.172103
+    }
+  },
+  "energy": {
+    "host_total_j": 1904.3114277599907,
+    "host_dynamic_j": 305.28709030848955,
+    "php_process_total_j": 0.4412257029558554,
+    "php_process_dynamic_j": 0.4412257029558554,
+    "host_average_power_w": 31.550627624846594,
+    "php_average_power_w": 0.0073102264942275464,
+    "baseline_host_average_power_w": 26.492631771549622,
+    "baseline_php_average_power_w": 0.0,
+    "php_attribution_unattributed_j": 0.40270969789525135,
+    "php_attribution_unattributed_percent": 91.27067965384202,
+    "host_j_per_successful_request": 15.869261897999923,
+    "host_dynamic_j_per_successful_request": 2.5440590859040797,
+    "php_j_per_successful_request": 0.0036768808579654617,
+    "php_dynamic_j_per_successful_request": 0.0036768808579654617
+  },
+  "carbon": {
+    "intensity_g_co2e_per_kwh": 100.0,
+    "host_total_g_co2e": 0.05289753965999974,
+    "host_dynamic_g_co2e": 0.0084801969530136,
+    "php_process_total_g_co2e": 1.2256269526551538e-05,
+    "php_process_dynamic_g_co2e": 1.2256269526551538e-05,
+    "host_total_g_co2e_per_1000_successful_requests": 0.44081283049999787,
+    "php_total_g_co2e_per_1000_successful_requests": 0.00010213557938792949
+  },
+  "profiling": {
+    "phpspy_samples_in_file": 8,
+    "energy_stacks": 8,
+    "cpu_stacks": 7,
+    "energy_flamegraph": "energy-flamegraph.svg",
+    "cpu_flamegraph": "cpu-flamegraph.svg",
+    "top_functions": "top-functions.csv",
+    "function_times": "function-times.csv"
+  },
+  "function_times": [
+    {
+      "function": "<main>",
+      "total_time_s": 5.779437303543091,
+      "avg_time_ms": 48.16197752952576,
+      "self_time_s": 0.0,
+      "avg_self_time_ms": 0.0,
+      "inclusive_time_s": 5.779437303543091,
+      "avg_inclusive_time_ms": 48.16197752952576,
+      "self_energy_j": 0.0,
+      "inclusive_energy_j": 0.0385160050606041
+    },
+    {
+      "function": "executeTextWorkload",
+      "total_time_s": 4.629051923751831,
+      "avg_time_ms": 38.57543269793193,
+      "self_time_s": 0.0,
+      "avg_self_time_ms": 0.0,
+      "inclusive_time_s": 4.629051923751831,
+      "avg_inclusive_time_ms": 38.57543269793193,
+      "self_energy_j": 0.0,
+      "inclusive_energy_j": 0.0385160050606041
+    },
+    {
+      "function": "executeMixedWorkload",
+      "total_time_s": 4.629051923751831,
+      "avg_time_ms": 38.57543269793193,
+      "self_time_s": 0.0,
+      "avg_self_time_ms": 0.0,
+      "inclusive_time_s": 4.629051923751831,
+      "avg_inclusive_time_ms": 38.57543269793193,
+      "self_energy_j": 0.0,
+      "inclusive_energy_j": 0.0385160050606041
+    },
+    {
+      "function": "countWordsFast",
+      "total_time_s": 4.629051923751831,
+      "avg_time_ms": 38.57543269793193,
+      "self_time_s": 1.169327974319458,
+      "avg_self_time_ms": 9.744399785995483,
+      "inclusive_time_s": 4.629051923751831,
+      "avg_inclusive_time_ms": 38.57543269793193,
+      "self_energy_j": 0.0,
+      "inclusive_energy_j": 0.0385160050606041
+    },
+    {
+      "function": "normalizeSentence",
+      "total_time_s": 3.459723949432373,
+      "avg_time_ms": 28.831032911936443,
+      "self_time_s": 1.153996467590332,
+      "avg_self_time_ms": 9.616637229919434,
+      "inclusive_time_s": 3.459723949432373,
+      "avg_inclusive_time_ms": 28.831032911936443,
+      "self_energy_j": 0.0,
+      "inclusive_energy_j": 0.0385160050606041
+    },
+    {
+      "function": "array_values",
+      "total_time_s": 1.174685001373291,
+      "avg_time_ms": 9.789041678110758,
+      "self_time_s": 1.174685001373291,
+      "avg_self_time_ms": 9.789041678110758,
+      "inclusive_time_s": 1.174685001373291,
+      "avg_inclusive_time_ms": 9.789041678110758,
+      "self_energy_j": 0.0,
+      "inclusive_energy_j": 0.0
+    },
+    {
+      "function": "isPrimeFast",
+      "total_time_s": 1.1552598476409912,
+      "avg_time_ms": 9.627165397008259,
+      "self_time_s": 1.1552598476409912,
+      "avg_self_time_ms": 9.627165397008259,
+      "inclusive_time_s": 1.1552598476409912,
+      "avg_inclusive_time_ms": 9.627165397008259,
+      "self_energy_j": 0.0,
+      "inclusive_energy_j": 0.0
+    },
+    {
+      "function": "preg_replace",
+      "total_time_s": 1.1529836654663086,
+      "avg_time_ms": 9.608197212219238,
+      "self_time_s": 1.1529836654663086,
+      "avg_self_time_ms": 9.608197212219238,
+      "inclusive_time_s": 1.1529836654663086,
+      "avg_inclusive_time_ms": 9.608197212219238,
+      "self_energy_j": 0.0385160050606041,
+      "inclusive_energy_j": 0.0385160050606041
+    },
+    {
+      "function": "array_filter",
+      "total_time_s": 1.1527438163757324,
+      "avg_time_ms": 9.60619846979777,
+      "self_time_s": 1.1527438163757324,
+      "avg_self_time_ms": 9.60619846979777,
+      "inclusive_time_s": 1.1527438163757324,
+      "avg_inclusive_time_ms": 9.60619846979777,
+      "self_energy_j": 0.0,
+      "inclusive_energy_j": 0.0
+    },
+    {
+      "function": "parse_url",
+      "total_time_s": 1.1503853797912598,
+      "avg_time_ms": 9.58654483159383,
+      "self_time_s": 1.1503853797912598,
+      "avg_self_time_ms": 9.58654483159383,
+      "inclusive_time_s": 1.1503853797912598,
+      "avg_inclusive_time_ms": 9.58654483159383,
+      "self_energy_j": 0.0,
+      "inclusive_energy_j": 0.0
+    }
+  ],
+  "interpretation_notes": [
+    "Scaphandre process power is attributed using hardware power and process CPU time.",
+    "The energy flamegraph correlates process-power intervals with phpspy samples.",
+    "Host energy includes every process active during the measurement.",
+    "Local k6 energy is included in host energy, but not in PHP process energy.",
+    "Carbon values are estimated operational emissions."
+  ]
+}

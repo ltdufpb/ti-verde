@@ -1,0 +1,20 @@
+{
+  "implementation": "slow",
+  "workload": "mixed",
+  "scale": 1,
+  "rate_requests_per_second": 2,
+  "configured_duration_seconds": 10,
+  "http_requests": 20,
+  "successful_requests": 20,
+  "failed_requests": 0,
+  "dropped_iterations": 0,
+  "failure_rate": 0,
+  "checks_rate": 1,
+  "request_duration_ms": {
+    "average": 12.57610575,
+    "median": 12.1550255,
+    "p90": 12.479436,
+    "p95": 13.281181800000006,
+    "max": 20.333541
+  }
+}

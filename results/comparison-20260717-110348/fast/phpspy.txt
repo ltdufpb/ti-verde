@@ -1,0 +1,53 @@
+0 normalizeSentence /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:123
+1 countWordsFast /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:166
+2 executeTextWorkload /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:201
+3 executeMixedWorkload /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:217
+4 <main> /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:1
+# trace_ts = 1784297205.596205
+# pid = 6535
+
+0 array_values <internal>:-1
+# trace_ts = 1784297212.095800
+# pid = 6535
+
+0 preg_replace <internal>:-1
+1 normalizeSentence /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:123
+2 countWordsFast /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:166
+3 executeTextWorkload /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:201
+4 executeMixedWorkload /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:217
+5 <main> /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:1
+# trace_ts = 1784297217.095617
+# pid = 6535
+
+0 countWordsFast /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:166
+1 executeTextWorkload /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:201
+2 executeMixedWorkload /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:217
+3 <main> /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:1
+# trace_ts = 1784297220.096026
+# pid = 6535
+
+0 countWordsFast /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:166
+1 executeTextWorkload /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:201
+2 executeMixedWorkload /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:217
+3 <main> /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:1
+# trace_ts = 1784297220.595981
+# pid = 6535
+
+0 array_filter <internal>:-1
+1 normalizeSentence /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:123
+2 countWordsFast /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:166
+3 executeTextWorkload /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:201
+4 executeMixedWorkload /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:217
+5 <main> /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:1
+# trace_ts = 1784297238.596273
+# pid = 6535
+
+0 parse_url <internal>:-1
+1 <main> /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:1
+# trace_ts = 1784297240.595524
+# pid = 6535
+
+0 isPrimeFast /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:49
+# trace_ts = 1784297247.595524
+# pid = 6535
+
