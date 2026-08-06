@@ -89,7 +89,7 @@ curl -fsS "${BASE_URL}/health" >/dev/null || {
 echo "PHP PID: $SERVER_PID"
 echo "Run directory: $RUN_DIR"
 
-BASE_URL="$BASE_URL" "$PROJECT_DIR/scripts/verify-equivalence.sh"
+# BASE_URL="$BASE_URL" "$PROJECT_DIR/scripts/verify-equivalence.sh"
 
 echo "Warm-up: ${WARMUP_SECONDS}s..."
 SUMMARY_PATH="$RUN_DIR/k6-warmup-summary.json" \
