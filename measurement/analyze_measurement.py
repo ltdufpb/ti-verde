@@ -381,6 +381,7 @@ def main() -> None:
     parser.add_argument("--scaphandre", type=Path)
     parser.add_argument("--phpspy", type=Path)
     parser.add_argument("--pyspy", type=Path)
+    parser.add_argument("--jfr", type=Path)
     parser.add_argument("--start-time", type=float)
     parser.add_argument("--baseline", type=Path)
     parser.add_argument("--window", type=Path)
@@ -396,8 +397,13 @@ def main() -> None:
         validate_scaphandre(args.validate_scaphandre)
         return
 
-    if not all([args.scaphandre, args.window, args.output_dir]) or not (args.phpspy or args.pyspy):
-        parser.error("--scaphandre, --window, --output-dir and either --phpspy or --pyspy are required.")
+    if not all([args.scaphandre, args.window, args.output_dir]) or not (
+        args.phpspy or args.pyspy or args.jfr
+    ):
+        parser.error(
+            "--scaphandre, --window, --output-dir and one of "
+            "--phpspy, --pyspy or --jfr are required."
+        )
 
     if args.pyspy and args.start_time is None:
         parser.error("--start-time is required when using --pyspy.")
@@ -441,7 +447,10 @@ def main() -> None:
     dynamic_host_uj = max(0.0, host_energy_uj - baseline_host_uw * duration)
     dynamic_process_uj = max(0.0, process_energy_uj - baseline_process_uw * duration)
 
-    if args.pyspy:
+    if args.jfr:
+        from jfr_parser import parse_jfr
+        samples = parse_jfr(args.jfr, target_pid)
+    elif args.pyspy:
         from pyspy_parser import parse_pyspy
         samples = parse_pyspy(args.pyspy, target_pid, args.start_time)
     else:
