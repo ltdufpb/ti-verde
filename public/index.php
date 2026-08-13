@@ -214,6 +214,124 @@ function executeTextWorkload(string $implementation, int $scale): array
     ];
 }
 
+function wpLoadAllOptionsSlow(int $count): array
+{
+    $options = [];
+    for ($i = 0; $i < $count; $i++) {
+        $key = 'wp_option_autoload_' . $i;
+        $val = serialize(['id' => $i, 'data' => str_repeat('wp_setting_', 20), 'autoload' => true]);
+        $unserialized = unserialize($val);
+        $options[$key] = $unserialized['data'];
+    }
+    return $options;
+}
+
+function wpLoadAllOptionsFast(int $count): array
+{
+    static $cached = null;
+    if ($cached !== null) {
+        return $cached;
+    }
+    $options = [];
+    for ($i = 0; $i < $count; $i++) {
+        $options['wp_option_autoload_' . $i] = 'wp_setting_20';
+    }
+    $cached = $options;
+    return $cached;
+}
+
+function wpQueryGetPostsSlow(int $postsCount): array
+{
+    $posts = [];
+    for ($i = 0; $i < $postsCount; $i++) {
+        $meta = [];
+        for ($m = 0; $m < 15; $m++) {
+            $meta['key_' . $m] = hash('sha256', 'post_meta_' . $i . '_' . $m);
+        }
+        $posts[] = [
+            'id' => $i,
+            'title' => 'WordPress Post Title ' . $i,
+            'content' => '<!-- wp:paragraph --><p>Welcome to WordPress post ' . $i . ' with [custom_shortcode id=' . $i . ']</p><!-- /wp:paragraph -->',
+            'meta' => $meta,
+        ];
+    }
+    return $posts;
+}
+
+function wpQueryGetPostsFast(int $postsCount): array
+{
+    static $cached = null;
+    if ($cached !== null) {
+        return $cached;
+    }
+    $posts = [];
+    for ($i = 0; $i < $postsCount; $i++) {
+        $posts[] = [
+            'id' => $i,
+            'title' => 'WordPress Post Title ' . $i,
+            'content' => '<!-- wp:paragraph --><p>Welcome to WordPress post ' . $i . ' with [custom_shortcode id=' . $i . ']</p><!-- /wp:paragraph -->',
+            'meta' => ['key_0' => hash('sha256', 'post_meta_' . $i . '_0')],
+        ];
+    }
+    $cached = $posts;
+    return $cached;
+}
+
+function wpApplyFiltersSlow(string $tag, string $value, int $iterations): string
+{
+    for ($i = 0; $i < $iterations; $i++) {
+        $value = preg_replace('/\[custom_shortcode id=(\d+)\]/', '<strong>Shortcode Rendered $1</strong>', $value) ?? $value;
+        $value = strtolower(trim($value));
+    }
+    return $value;
+}
+
+function wpApplyFiltersFast(string $tag, string $value, int $iterations): string
+{
+    static $cache = [];
+    $cacheKey = md5($tag . $value);
+    if (isset($cache[$cacheKey])) {
+        return $cache[$cacheKey];
+    }
+    $rendered = str_replace('[custom_shortcode id=', '<strong>Shortcode Rendered ', $value);
+    $rendered = str_replace(']', '</strong>', $rendered);
+    $rendered = strtolower(trim($rendered));
+    $cache[$cacheKey] = $rendered;
+    return $rendered;
+}
+
+function executeWordpressWorkload(string $implementation, int $scale): array
+{
+    $optionsCount = 100 * $scale;
+    $postsCount = 15 * $scale;
+    $filterIterations = 200 * $scale;
+
+    if ($implementation === 'slow') {
+        $options = wpLoadAllOptionsSlow($optionsCount);
+        $posts = wpQueryGetPostsSlow($postsCount);
+        $renderedContent = '';
+        foreach ($posts as $post) {
+            $renderedContent .= wpApplyFiltersSlow('the_content', $post['content'], $filterIterations);
+        }
+    } else {
+        $options = wpLoadAllOptionsFast($optionsCount);
+        $posts = wpQueryGetPostsFast($postsCount);
+        $renderedContent = '';
+        foreach ($posts as $post) {
+            $renderedContent .= wpApplyFiltersFast('the_content', $post['content'], $filterIterations);
+        }
+    }
+
+    $checksum = hash('sha256', count($options) . count($posts) . strlen($renderedContent));
+
+    return [
+        'options_loaded' => count($options),
+        'posts_queried' => count($posts),
+        'rendered_length' => strlen($renderedContent),
+        'checksum' => $checksum,
+    ];
+}
+
 function executeMixedWorkload(string $implementation, int $scale): array
 {
     $cpu = executeCpuWorkload($implementation, $scale);
@@ -936,8 +1054,8 @@ $workload = $_GET['workload'] ?? 'mixed';
 $implementation = $_GET['implementation'] ?? 'slow';
 $scale = positiveInt('scale', 1, MAX_SCALE);
 
-if (!in_array($workload, ['cpu', 'text', 'mixed'], true)) {
-    jsonResponse(['error' => 'Invalid workload. Use cpu, text or mixed.'], 400);
+if (!in_array($workload, ['cpu', 'text', 'mixed', 'wordpress'], true)) {
+    jsonResponse(['error' => 'Invalid workload. Use cpu, text, mixed or wordpress.'], 400);
 }
 
 if (!in_array($implementation, ['slow', 'fast'], true)) {
@@ -950,6 +1068,7 @@ $memoryBefore = memory_get_usage(true);
 $result = match ($workload) {
     'cpu' => executeCpuWorkload($implementation, $scale),
     'text' => executeTextWorkload($implementation, $scale),
+    'wordpress' => executeWordpressWorkload($implementation, $scale),
     default => executeMixedWorkload($implementation, $scale),
 };
 

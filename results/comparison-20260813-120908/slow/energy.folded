@@ -1,0 +1,5 @@
+[unattributed: no PHP stack sample] 654087
+<main>;executeWordpressWorkload;wpApplyFiltersSlow 41869
+<main>;executeWordpressWorkload;wpApplyFiltersSlow;preg_replace 31009
+<main>;executeWordpressWorkload;wpQueryGetPostsSlow 20526
+<main>;executeWordpressWorkload;wpApplyFiltersSlow;strtolower 10243

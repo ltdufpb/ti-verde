@@ -1,0 +1,46 @@
+0 wpApplyFiltersSlow /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:280
+1 executeWordpressWorkload /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:303
+2 <main> /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:1
+# trace_ts = 1786633784.616884
+# pid = 88924
+
+0 strtolower <internal>:-1
+1 wpApplyFiltersSlow /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:280
+2 executeWordpressWorkload /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:303
+3 <main> /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:1
+# trace_ts = 1786633790.616276
+# pid = 88924
+
+0 preg_replace <internal>:-1
+1 wpApplyFiltersSlow /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:280
+2 executeWordpressWorkload /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:303
+3 <main> /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:1
+# trace_ts = 1786633791.118113
+# pid = 88924
+
+0 preg_replace <internal>:-1
+1 wpApplyFiltersSlow /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:280
+2 executeWordpressWorkload /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:303
+3 <main> /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:1
+# trace_ts = 1786633796.123073
+# pid = 88924
+
+0 wpQueryGetPostsSlow /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:243
+1 executeWordpressWorkload /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:303
+2 <main> /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:1
+# trace_ts = 1786633801.116235
+# pid = 88924
+
+0 preg_replace <internal>:-1
+1 wpApplyFiltersSlow /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:280
+2 executeWordpressWorkload /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:303
+3 <main> /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:1
+# trace_ts = 1786633806.616764
+# pid = 88924
+
+0 wpApplyFiltersSlow /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:280
+1 executeWordpressWorkload /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:303
+2 <main> /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:1
+# trace_ts = 1786633833.617281
+# pid = 88924
+

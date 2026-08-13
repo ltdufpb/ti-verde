@@ -1,0 +1,7 @@
+function,total_time_s,avg_time_ms,self_time_s,avg_self_time_ms,inclusive_time_s,avg_inclusive_time_ms
+executeWordpressWorkload,6.465696,53.436,0.000000,0.000,6.465696,53.436
+<main>,6.465696,53.436,0.000000,0.000,6.465696,53.436
+wpApplyFiltersSlow,5.390002,44.545,2.156869,17.825,5.390002,44.545
+preg_replace,2.695612,22.278,2.695612,22.278,2.695612,22.278
+wpQueryGetPostsSlow,1.075693,8.890,1.075693,8.890,1.075693,8.890
+strtolower,0.537521,4.442,0.537521,4.442,0.537521,4.442

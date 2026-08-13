@@ -1,0 +1,4 @@
+<main>;executeWordpressWorkload;wpApplyFiltersSlow;preg_replace 3
+<main>;executeWordpressWorkload;wpApplyFiltersSlow 2
+<main>;executeWordpressWorkload;wpApplyFiltersSlow;strtolower 1
+<main>;executeWordpressWorkload;wpQueryGetPostsSlow 1

@@ -114,12 +114,14 @@ def main() -> None:
         lines.extend([
             "## Function execution time comparison (Tempo Total e Médio por Função)",
             "",
-            "| Function | Slow Total (s) | Fast Total (s) | Slow Avg (ms) | Fast Avg (ms) | Time Reduction |",
-            "|---|---:|---:|---:|---:|---:|",
+            "| Function | Slow Samples | Fast Samples | Slow Total (s) | Fast Total (s) | Slow Avg (ms) | Fast Avg (ms) | Time Reduction |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|",
         ])
         for name in all_funcs[:15]:
             s_item = slow_ft.get(name, {})
             f_item = fast_ft.get(name, {})
+            ssamp = int(s_item.get("samples", s_item.get("inclusive_samples", 0)))
+            fsamp = int(f_item.get("samples", f_item.get("inclusive_samples", 0)))
             st = float(s_item.get("total_time_s", 0.0))
             ft = float(f_item.get("total_time_s", 0.0))
             sa = float(s_item.get("avg_time_ms", 0.0))
@@ -127,7 +129,7 @@ def main() -> None:
             red = reduction(st, ft) if st > 0 else None
             red_str = "n/a" if red is None else f"{red:.2f}%"
             lines.append(
-                f"| `{name}` | {st:.6f} | {ft:.6f} | {sa:.3f} | {fa:.3f} | {red_str} |"
+                f"| `{name}` | {ssamp} | {fsamp} | {st:.6f} | {ft:.6f} | {sa:.3f} | {fa:.3f} | {red_str} |"
             )
         lines.append("")
 

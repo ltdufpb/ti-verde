@@ -230,6 +230,8 @@ results/comparison-YYYYMMDD-HHMMSS/
 #### `top-functions.csv`
 Tabela com a classificação de todas as funções segundo seu impacto energético.
 - `function`: Nome da função PHP.
+- `self_samples`: Número de amostras (chamadas observadas) em que a função estava executando no topo da pilha (*self*).
+- `inclusive_samples`: Número total de amostras em que a função esteve ativa na pilha de execução (*inclusive*).
 - `self_energy_j`: Energia consumida exclusivamente pela própria função (em Joules).
 - `self_energy_percent_of_php`: Porcentagem da energia total do processo PHP consumida diretamente pela função.
 - `inclusive_energy_j`: Energia consumida pela função somada às funções que ela chamou (em Joules).
@@ -238,8 +240,10 @@ Tabela com a classificação de todas as funções segundo seu impacto energéti
 - `inclusive_time_s` / `avg_inclusive_time_ms`: Tempo inclusivo total (em segundos) e tempo médio por requisição (em milissegundos).
 
 #### `function-times.csv`
-Tabela focada no detalhamento temporal de todas as funções executadas.
+Tabela focada no detalhamento temporal e frequência de amostragem de todas as funções executadas.
 - `function`: Nome da função PHP.
+- `samples`: Número de vezes que a função foi observada/amostrada na pilha durante o teste (*inclusive samples*).
+- `self_samples`: Número de vezes que a função foi observada executando no topo da pilha (*self samples*).
 - `total_time_s`: Tempo total acumulado de execução da função (em segundos).
 - `avg_time_ms`: Tempo médio de execução por requisição bem-sucedida (em milissegundos).
 - `self_time_s` / `avg_self_time_ms`: Tempo de execução próprio (excluindo funções filhas).

@@ -274,6 +274,8 @@ def attribute_energy_to_stacks(
     dict[str, float],
     dict[str, float],
     dict[str, float],
+    dict[str, int],
+    dict[str, int],
     float,
     float,
 ]:
@@ -283,6 +285,8 @@ def attribute_energy_to_stacks(
     inclusive_energy: dict[str, float] = defaultdict(float)
     self_time: dict[str, float] = defaultdict(float)
     inclusive_time: dict[str, float] = defaultdict(float)
+    self_samples: dict[str, int] = defaultdict(int)
+    inclusive_samples: dict[str, int] = defaultdict(int)
     unattributed_energy = 0.0
     unattributed_time = 0.0
 
@@ -315,10 +319,12 @@ def attribute_energy_to_stacks(
             leaf = sample.stack[-1]
             self_energy[leaf] += energy_per_sample
             self_time[leaf] += time_per_sample
+            self_samples[leaf] += 1
 
             for function in set(sample.stack):
                 inclusive_energy[function] += energy_per_sample
                 inclusive_time[function] += time_per_sample
+                inclusive_samples[function] += 1
 
     return (
         energy_by_stack,
@@ -327,6 +333,8 @@ def attribute_energy_to_stacks(
         inclusive_energy,
         self_time,
         inclusive_time,
+        self_samples,
+        inclusive_samples,
         unattributed_energy,
         unattributed_time,
     )
@@ -444,6 +452,8 @@ def main() -> None:
         inclusive_energy,
         self_time,
         inclusive_time,
+        self_samples,
+        inclusive_samples,
         unattributed_uj,
         unattributed_time_s,
     ) = attribute_energy_to_stacks(process_points, samples, target_pid)
@@ -487,9 +497,14 @@ def main() -> None:
         avg_it_ms = (it_s / successful * 1000.0) if successful > 0 else 0.0
         self_uj = self_energy.get(name, 0.0)
         inclusive_uj = inclusive_energy.get(name, 0.0)
+        self_samp = self_samples.get(name, 0)
+        inc_samp = inclusive_samples.get(name, 0)
 
         function_times_list.append({
             "function": name,
+            "samples": inc_samp,
+            "self_samples": self_samp,
+            "inclusive_samples": inc_samp,
             "total_time_s": it_s,
             "avg_time_ms": avg_it_ms,
             "self_time_s": st_s,
@@ -505,6 +520,8 @@ def main() -> None:
         writer = csv.writer(handle)
         writer.writerow([
             "function",
+            "samples",
+            "self_samples",
             "total_time_s",
             "avg_time_ms",
             "self_time_s",
@@ -515,6 +532,8 @@ def main() -> None:
         for ft in function_times_list:
             writer.writerow([
                 ft["function"],
+                ft["samples"],
+                ft["self_samples"],
                 f"{ft['total_time_s']:.6f}",
                 f"{ft['avg_time_ms']:.3f}",
                 f"{ft['self_time_s']:.6f}",
@@ -528,6 +547,8 @@ def main() -> None:
         writer = csv.writer(handle)
         writer.writerow([
             "function",
+            "self_samples",
+            "inclusive_samples",
             "self_energy_j",
             "self_energy_percent_of_php",
             "inclusive_energy_j",
@@ -542,10 +563,14 @@ def main() -> None:
             inclusive_uj = inclusive_energy.get(name, 0.0)
             st_s = self_time.get(name, 0.0)
             it_s = inclusive_time.get(name, 0.0)
+            self_samp = self_samples.get(name, 0)
+            inc_samp = inclusive_samples.get(name, 0)
             avg_st_ms = (st_s / successful * 1000.0) if successful > 0 else 0.0
             avg_it_ms = (it_s / successful * 1000.0) if successful > 0 else 0.0
             writer.writerow([
                 name,
+                self_samp,
+                inc_samp,
                 self_uj / 1_000_000.0,
                 safe_divide(self_uj * 100, process_energy_uj),
                 inclusive_uj / 1_000_000.0,
@@ -656,13 +681,14 @@ def main() -> None:
         "",
         "## Top sampled self-energy functions",
         "",
-        "| Function | Self energy (J) | Inclusive energy (J) |",
-        "|---|---:|---:|",
+        "| Function | Samples (Calls) | Self energy (J) | Inclusive energy (J) |",
+        "|---|---:|---:|---:|",
     ]
 
     for row in top_rows:
         lines.append(
             f"| `{row['function']}` | "
+            f"{row.get('inclusive_samples', row.get('self_samples', '0'))} | "
             f"{float(row['self_energy_j']):.6f} | "
             f"{float(row['inclusive_energy_j']):.6f} |"
         )
@@ -671,13 +697,14 @@ def main() -> None:
         "",
         "## Function execution times (Tempo de Execução por Função)",
         "",
-        "| Function | Total time (s) | Average time (ms/req) | Self time (s) | Inclusive time (s) |",
-        "|---|---:|---:|---:|---:|",
+        "| Function | Samples (Calls) | Total time (s) | Average time (ms/req) | Self time (s) | Inclusive time (s) |",
+        "|---|---:|---:|---:|---:|---:|",
     ])
 
     for ft in function_times_list[:15]:
         lines.append(
             f"| `{ft['function']}` | "
+            f"{ft['samples']} | "
             f"{ft['total_time_s']:.6f} | "
             f"{ft['avg_time_ms']:.3f} | "
             f"{ft['self_time_s']:.6f} | "

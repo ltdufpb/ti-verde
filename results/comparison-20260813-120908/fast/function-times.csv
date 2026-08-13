@@ -1,0 +1,5 @@
+function,total_time_s,avg_time_ms,self_time_s,avg_self_time_ms,inclusive_time_s,avg_inclusive_time_ms
+wpApplyFiltersFast,1.078100,8.984,0.000000,0.000,1.078100,8.984
+<main>,1.078100,8.984,0.000000,0.000,1.078100,8.984
+hash,1.078100,8.984,1.078100,8.984,1.078100,8.984
+executeWordpressWorkload,1.078100,8.984,0.000000,0.000,1.078100,8.984

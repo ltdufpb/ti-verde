@@ -1,0 +1,3382 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" width="1200" height="678" onload="init(evt)" viewBox="0 0 1200 678" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<!-- Flame graph stack visualization. See https://github.com/brendangregg/FlameGraph for latest version, and http://www.brendangregg.com/flamegraphs.html for examples. -->
+<!-- NOTES:  -->
+<defs>
+	<linearGradient id="background" y1="0" y2="1" x1="0" x2="0" >
+		<stop stop-color="#eeeeee" offset="5%" />
+		<stop stop-color="#eeeeb0" offset="95%" />
+	</linearGradient>
+</defs>
+<style type="text/css">
+	text { font-family:Verdana; font-size:12px; fill:rgb(0,0,0); }
+	#search, #ignorecase { opacity:0.1; cursor:pointer; }
+	#search:hover, #search.show, #ignorecase:hover, #ignorecase.show { opacity:1; }
+	#subtitle { text-anchor:middle; font-color:rgb(160,160,160); }
+	#title { text-anchor:middle; font-size:17px}
+	#unzoom { cursor:pointer; }
+	#frames > *:hover { stroke:black; stroke-width:0.5; cursor:pointer; }
+	.hide { display:none; }
+	.parent { opacity:0.5; }
+</style>
+<script type="text/ecmascript">
+<![CDATA[
+	"use strict";
+	var details, searchbtn, unzoombtn, matchedtxt, svg, searching, currentSearchTerm, ignorecase, ignorecaseBtn;
+	function init(evt) {
+		details = document.getElementById("details").firstChild;
+		searchbtn = document.getElementById("search");
+		ignorecaseBtn = document.getElementById("ignorecase");
+		unzoombtn = document.getElementById("unzoom");
+		matchedtxt = document.getElementById("matched");
+		svg = document.getElementsByTagName("svg")[0];
+		searching = 0;
+		currentSearchTerm = null;
+
+		// use GET parameters to restore a flamegraphs state.
+		var params = get_params();
+		if (params.x && params.y)
+			zoom(find_group(document.querySelector('[x="' + params.x + '"][y="' + params.y + '"]')));
+                if (params.s) search(params.s);
+	}
+
+	// event listeners
+	window.addEventListener("click", function(e) {
+		var target = find_group(e.target);
+		if (target) {
+			if (target.nodeName == "a") {
+				if (e.ctrlKey === false) return;
+				e.preventDefault();
+			}
+			if (target.classList.contains("parent")) unzoom(true);
+			zoom(target);
+			if (!document.querySelector('.parent')) {
+				// we have basically done a clearzoom so clear the url
+				var params = get_params();
+				if (params.x) delete params.x;
+				if (params.y) delete params.y;
+				history.replaceState(null, null, parse_params(params));
+				unzoombtn.classList.add("hide");
+				return;
+			}
+
+			// set parameters for zoom state
+			var el = target.querySelector("rect");
+			if (el && el.attributes && el.attributes.y && el.attributes._orig_x) {
+				var params = get_params()
+				params.x = el.attributes._orig_x.value;
+				params.y = el.attributes.y.value;
+				history.replaceState(null, null, parse_params(params));
+			}
+		}
+		else if (e.target.id == "unzoom") clearzoom();
+		else if (e.target.id == "search") search_prompt();
+		else if (e.target.id == "ignorecase") toggle_ignorecase();
+	}, false)
+
+	// mouse-over for info
+	// show
+	window.addEventListener("mouseover", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = "Function: " + g_to_text(target);
+	}, false)
+
+	// clear
+	window.addEventListener("mouseout", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = ' ';
+	}, false)
+
+	// ctrl-F for search
+	// ctrl-I to toggle case-sensitive search
+	window.addEventListener("keydown",function (e) {
+		if (e.keyCode === 114 || (e.ctrlKey && e.keyCode === 70)) {
+			e.preventDefault();
+			search_prompt();
+		}
+		else if (e.ctrlKey && e.keyCode === 73) {
+			e.preventDefault();
+			toggle_ignorecase();
+		}
+	}, false)
+
+	// functions
+	function get_params() {
+		var params = {};
+		var paramsarr = window.location.search.substr(1).split('&');
+		for (var i = 0; i < paramsarr.length; ++i) {
+			var tmp = paramsarr[i].split("=");
+			if (!tmp[0] || !tmp[1]) continue;
+			params[tmp[0]]  = decodeURIComponent(tmp[1]);
+		}
+		return params;
+	}
+	function parse_params(params) {
+		var uri = "?";
+		for (var key in params) {
+			uri += key + '=' + encodeURIComponent(params[key]) + '&';
+		}
+		if (uri.slice(-1) == "&")
+			uri = uri.substring(0, uri.length - 1);
+		if (uri == '?')
+			uri = window.location.href.split('?')[0];
+		return uri;
+	}
+	function find_child(node, selector) {
+		var children = node.querySelectorAll(selector);
+		if (children.length) return children[0];
+	}
+	function find_group(node) {
+		var parent = node.parentElement;
+		if (!parent) return;
+		if (parent.id == "frames") return node;
+		return find_group(parent);
+	}
+	function orig_save(e, attr, val) {
+		if (e.attributes["_orig_" + attr] != undefined) return;
+		if (e.attributes[attr] == undefined) return;
+		if (val == undefined) val = e.attributes[attr].value;
+		e.setAttribute("_orig_" + attr, val);
+	}
+	function orig_load(e, attr) {
+		if (e.attributes["_orig_"+attr] == undefined) return;
+		e.attributes[attr].value = e.attributes["_orig_" + attr].value;
+		e.removeAttribute("_orig_"+attr);
+	}
+	function g_to_text(e) {
+		var text = find_child(e, "title").firstChild.nodeValue;
+		return (text)
+	}
+	function g_to_func(e) {
+		var func = g_to_text(e);
+		// if there's any manipulation we want to do to the function
+		// name before it's searched, do it here before returning.
+		return (func);
+	}
+	function update_text(e) {
+		var r = find_child(e, "rect");
+		var t = find_child(e, "text");
+		var w = parseFloat(r.attributes.width.value) -3;
+		var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+		t.attributes.x.value = parseFloat(r.attributes.x.value) + 3;
+
+		// Smaller than this size won't fit anything
+		if (w < 2 * 12 * 0.59) {
+			t.textContent = "";
+			return;
+		}
+
+		t.textContent = txt;
+		var sl = t.getSubStringLength(0, txt.length);
+		// check if only whitespace or if we can fit the entire string into width w
+		if (/^ *$/.test(txt) || sl < w)
+			return;
+
+		// this isn't perfect, but gives a good starting point
+		// and avoids calling getSubStringLength too often
+		var start = Math.floor((w/sl) * txt.length);
+		for (var x = start; x > 0; x = x-2) {
+			if (t.getSubStringLength(0, x + 2) <= w) {
+				t.textContent = txt.substring(0, x) + "..";
+				return;
+			}
+		}
+		t.textContent = "";
+	}
+
+	// zoom
+	function zoom_reset(e) {
+		if (e.attributes != undefined) {
+			orig_load(e, "x");
+			orig_load(e, "width");
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_reset(c[i]);
+		}
+	}
+	function zoom_child(e, x, ratio) {
+		if (e.attributes != undefined) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = (parseFloat(e.attributes.x.value) - x - 10) * ratio + 10;
+				if (e.tagName == "text")
+					e.attributes.x.value = find_child(e.parentNode, "rect[x]").attributes.x.value + 3;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseFloat(e.attributes.width.value) * ratio;
+			}
+		}
+
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_child(c[i], x - 10, ratio);
+		}
+	}
+	function zoom_parent(e) {
+		if (e.attributes) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = 10;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseInt(svg.width.baseVal.value) - (10 * 2);
+			}
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_parent(c[i]);
+		}
+	}
+	function zoom(node) {
+		var attr = find_child(node, "rect").attributes;
+		var width = parseFloat(attr.width.value);
+		var xmin = parseFloat(attr.x.value);
+		var xmax = parseFloat(xmin + width);
+		var ymin = parseFloat(attr.y.value);
+		var ratio = (svg.width.baseVal.value - 2 * 10) / width;
+
+		// XXX: Workaround for JavaScript float issues (fix me)
+		var fudge = 0.0001;
+
+		unzoombtn.classList.remove("hide");
+
+		var el = document.getElementById("frames").children;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var a = find_child(e, "rect").attributes;
+			var ex = parseFloat(a.x.value);
+			var ew = parseFloat(a.width.value);
+			var upstack;
+			// Is it an ancestor
+			if (0 == 0) {
+				upstack = parseFloat(a.y.value) > ymin;
+			} else {
+				upstack = parseFloat(a.y.value) < ymin;
+			}
+			if (upstack) {
+				// Direct ancestor
+				if (ex <= xmin && (ex+ew+fudge) >= xmax) {
+					e.classList.add("parent");
+					zoom_parent(e);
+					update_text(e);
+				}
+				// not in current path
+				else
+					e.classList.add("hide");
+			}
+			// Children maybe
+			else {
+				// no common path
+				if (ex < xmin || ex + fudge >= xmax) {
+					e.classList.add("hide");
+				}
+				else {
+					zoom_child(e, xmin, ratio);
+					update_text(e);
+				}
+			}
+		}
+		search();
+	}
+	function unzoom(dont_update_text) {
+		unzoombtn.classList.add("hide");
+		var el = document.getElementById("frames").children;
+		for(var i = 0; i < el.length; i++) {
+			el[i].classList.remove("parent");
+			el[i].classList.remove("hide");
+			zoom_reset(el[i]);
+			if(!dont_update_text) update_text(el[i]);
+		}
+		search();
+	}
+	function clearzoom() {
+		unzoom();
+
+		// remove zoom state
+		var params = get_params();
+		if (params.x) delete params.x;
+		if (params.y) delete params.y;
+		history.replaceState(null, null, parse_params(params));
+	}
+
+	// search
+	function toggle_ignorecase() {
+		ignorecase = !ignorecase;
+		if (ignorecase) {
+			ignorecaseBtn.classList.add("show");
+		} else {
+			ignorecaseBtn.classList.remove("show");
+		}
+		reset_search();
+		search();
+	}
+	function reset_search() {
+		var el = document.querySelectorAll("#frames rect");
+		for (var i = 0; i < el.length; i++) {
+			orig_load(el[i], "fill")
+		}
+		var params = get_params();
+		delete params.s;
+		history.replaceState(null, null, parse_params(params));
+	}
+	function search_prompt() {
+		if (!searching) {
+			var term = prompt("Enter a search term (regexp " +
+			    "allowed, eg: ^ext4_)"
+			    + (ignorecase ? ", ignoring case" : "")
+			    + "\nPress Ctrl-i to toggle case sensitivity", "");
+			if (term != null) search(term);
+		} else {
+			reset_search();
+			searching = 0;
+			currentSearchTerm = null;
+			searchbtn.classList.remove("show");
+			searchbtn.firstChild.nodeValue = "Search"
+			matchedtxt.classList.add("hide");
+			matchedtxt.firstChild.nodeValue = ""
+		}
+	}
+	function search(term) {
+		if (term) currentSearchTerm = term;
+		if (currentSearchTerm === null) return;
+
+		var re = new RegExp(currentSearchTerm, ignorecase ? 'i' : '');
+		var el = document.getElementById("frames").children;
+		var matches = new Object();
+		var maxwidth = 0;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var func = g_to_func(e);
+			var rect = find_child(e, "rect");
+			if (func == null || rect == null)
+				continue;
+
+			// Save max width. Only works as we have a root frame
+			var w = parseFloat(rect.attributes.width.value);
+			if (w > maxwidth)
+				maxwidth = w;
+
+			if (func.match(re)) {
+				// highlight
+				var x = parseFloat(rect.attributes.x.value);
+				orig_save(rect, "fill");
+				rect.attributes.fill.value = "rgb(230,0,230)";
+
+				// remember matches
+				if (matches[x] == undefined) {
+					matches[x] = w;
+				} else {
+					if (w > matches[x]) {
+						// overwrite with parent
+						matches[x] = w;
+					}
+				}
+				searching = 1;
+			}
+		}
+		if (!searching)
+			return;
+		var params = get_params();
+		params.s = currentSearchTerm;
+		history.replaceState(null, null, parse_params(params));
+
+		searchbtn.classList.add("show");
+		searchbtn.firstChild.nodeValue = "Reset Search";
+
+		// calculate percent matched, excluding vertical overlap
+		var count = 0;
+		var lastx = -1;
+		var lastw = 0;
+		var keys = Array();
+		for (k in matches) {
+			if (matches.hasOwnProperty(k))
+				keys.push(k);
+		}
+		// sort the matched frames by their x location
+		// ascending, then width descending
+		keys.sort(function(a, b){
+			return a - b;
+		});
+		// Step through frames saving only the biggest bottom-up frames
+		// thanks to the sort order. This relies on the tree property
+		// where children are always smaller than their parents.
+		var fudge = 0.0001;	// JavaScript floating point
+		for (var k in keys) {
+			var x = parseFloat(keys[k]);
+			var w = matches[keys[k]];
+			if (x >= lastx + lastw - fudge) {
+				count += w;
+				lastx = x;
+				lastw = w;
+			}
+		}
+		// display matched percent
+		matchedtxt.classList.remove("hide");
+		var pct = 100 * count / maxwidth;
+		if (pct != 100) pct = pct.toFixed(1)
+		matchedtxt.firstChild.nodeValue = "Matched: " + pct + "%";
+	}
+]]>
+</script>
+<rect x="0.0" y="0" width="1200.0" height="678.0" fill="url(#background)"  />
+<text id="title" x="600.00" y="24" >PHP energy-attributed hotspots</text>
+<text id="details" x="10.00" y="661" > </text>
+<text id="unzoom" x="10.00" y="24" class="hide">Reset Zoom</text>
+<text id="search" x="1090.00" y="24" >Search</text>
+<text id="ignorecase" x="1174.00" y="24" >ic</text>
+<text id="matched" x="1090.00" y="661" > </text>
+<g id="frames">
+<g >
+<title>get_post_stati (76,055 microjoules, 0.36%)</title><rect x="967.1" y="437" width="4.2" height="15.0" fill="rgb(239,159,38)" rx="2" ry="2" />
+<text  x="970.08" y="447.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::merge (44,752 microjoules, 0.21%)</title><rect x="364.3" y="197" width="2.5" height="15.0" fill="rgb(245,185,44)" rx="2" ry="2" />
+<text  x="367.30" y="207.5" ></text>
+</g>
+<g >
+<title>WP_Block::render (47,795 microjoules, 0.23%)</title><rect x="646.0" y="373" width="2.7" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="649.01" y="383.5" ></text>
+</g>
+<g >
+<title>get_block_wrapper_attributes (29,574 microjoules, 0.14%)</title><rect x="808.4" y="213" width="1.6" height="15.0" fill="rgb(235,140,33)" rx="2" ry="2" />
+<text  x="811.40" y="223.5" ></text>
+</g>
+<g >
+<title>wp_json_encode (67,299 microjoules, 0.32%)</title><rect x="886.7" y="389" width="3.8" height="15.0" fill="rgb(220,71,17)" rx="2" ry="2" />
+<text  x="889.70" y="399.5" ></text>
+</g>
+<g >
+<title>WP_Scripts::init (187,816 microjoules, 0.89%)</title><rect x="840.2" y="453" width="10.5" height="15.0" fill="rgb(249,202,48)" rx="2" ry="2" />
+<text  x="843.21" y="463.5" ></text>
+</g>
+<g >
+<title>WP_Query::{closure} (50,895 microjoules, 0.24%)</title><rect x="1103.4" y="469" width="2.9" height="15.0" fill="rgb(228,107,25)" rx="2" ry="2" />
+<text  x="1106.42" y="479.5" ></text>
+</g>
+<g >
+<title>WP_Query::__construct (304,040 microjoules, 1.44%)</title><rect x="958.7" y="485" width="16.9" height="15.0" fill="rgb(254,226,54)" rx="2" ry="2" />
+<text  x="961.66" y="495.5" ></text>
+</g>
+<g >
+<title>WP_Block_Supports::register_attributes (31,925 microjoules, 0.15%)</title><rect x="68.2" y="469" width="1.8" height="15.0" fill="rgb(250,209,50)" rx="2" ry="2" />
+<text  x="71.18" y="479.5" ></text>
+</g>
+<g >
+<title>WP_Block::render (2,549,077 microjoules, 12.05%)</title><rect x="646.0" y="405" width="142.2" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="649.01" y="415.5" >WP_Block::render</text>
+</g>
+<g >
+<title>register_block_type_from_metadata (137,199 microjoules, 0.65%)</title><rect x="187.8" y="469" width="7.6" height="15.0" fill="rgb(212,32,7)" rx="2" ry="2" />
+<text  x="190.76" y="479.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON_Resolver::get_merged_data (252,798 microjoules, 1.20%)</title><rect x="406.3" y="213" width="14.1" height="15.0" fill="rgb(251,214,51)" rx="2" ry="2" />
+<text  x="409.31" y="223.5" ></text>
+</g>
+<g >
+<title>WP_Navigation_Fallback::get_fallback (189,166 microjoules, 0.89%)</title><rect x="735.7" y="293" width="10.5" height="15.0" fill="rgb(223,83,19)" rx="2" ry="2" />
+<text  x="738.66" y="303.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::merge (140,047 microjoules, 0.66%)</title><rect x="690.1" y="293" width="7.8" height="15.0" fill="rgb(245,185,44)" rx="2" ry="2" />
+<text  x="693.07" y="303.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::get_block_classes (99,625 microjoules, 0.47%)</title><rect x="320.8" y="229" width="5.5" height="15.0" fill="rgb(238,152,36)" rx="2" ry="2" />
+<text  x="323.78" y="239.5" ></text>
+</g>
+<g >
+<title>wp_is_numeric_array (95,382 microjoules, 0.45%)</title><rect x="1043.3" y="325" width="5.3" height="15.0" fill="rgb(224,88,21)" rx="2" ry="2" />
+<text  x="1046.29" y="335.5" ></text>
+</g>
+<g >
+<title>wpdb::query (414,844 microjoules, 1.96%)</title><rect x="70.0" y="357" width="23.1" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="72.96" y="367.5" >w..</text>
+</g>
+<g >
+<title>WP_Theme_JSON::__construct (44,752 microjoules, 0.21%)</title><rect x="719.3" y="277" width="2.5" height="15.0" fill="rgb(238,152,36)" rx="2" ry="2" />
+<text  x="722.32" y="287.5" ></text>
+</g>
+<g >
+<title>wp_get_current_user (158,814 microjoules, 0.75%)</title><rect x="46.9" y="517" width="8.8" height="15.0" fill="rgb(244,183,43)" rx="2" ry="2" />
+<text  x="49.88" y="527.5" ></text>
+</g>
+<g >
+<title>block_core_navigation_get_fallback_blocks (189,166 microjoules, 0.89%)</title><rect x="735.7" y="309" width="10.5" height="15.0" fill="rgb(236,143,34)" rx="2" ry="2" />
+<text  x="738.66" y="319.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::get_blocks_metadata (457,396 microjoules, 2.16%)</title><rect x="1005.7" y="389" width="25.5" height="15.0" fill="rgb(209,18,4)" rx="2" ry="2" />
+<text  x="1008.73" y="399.5" >W..</text>
+</g>
+<g >
+<title>wp_prime_network_option_caches (414,844 microjoules, 1.96%)</title><rect x="70.0" y="405" width="23.1" height="15.0" fill="rgb(227,102,24)" rx="2" ry="2" />
+<text  x="72.96" y="415.5" >w..</text>
+</g>
+<g >
+<title>WP_Theme_JSON_Resolver::get_theme_data (1,076,500 microjoules, 5.09%)</title><rect x="1001.8" y="437" width="60.0" height="15.0" fill="rgb(228,106,25)" rx="2" ry="2" />
+<text  x="1004.78" y="447.5" >WP_The..</text>
+</g>
+<g >
+<title>register_block_core_navigation_overlay_close (85,919 microjoules, 0.41%)</title><rect x="104.4" y="485" width="4.8" height="15.0" fill="rgb(208,17,4)" rx="2" ry="2" />
+<text  x="107.45" y="495.5" ></text>
+</g>
+<g >
+<title>WP_Duotone::get_all_global_style_block_names (64,412 microjoules, 0.30%)</title><rect x="784.6" y="325" width="3.6" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="787.62" y="335.5" ></text>
+</g>
+<g >
+<title>[unattributed: no PHP stack sample] (90,053 microjoules, 0.43%)</title><rect x="1127.3" y="613" width="5.0" height="15.0" fill="rgb(207,9,2)" rx="2" ry="2" />
+<text  x="1130.28" y="623.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON_Resolver::get_block_data (90,656 microjoules, 0.43%)</title><rect x="654.0" y="293" width="5.1" height="15.0" fill="rgb(229,114,27)" rx="2" ry="2" />
+<text  x="657.03" y="303.5" ></text>
+</g>
+<g >
+<title>WP_Hook::apply_filters (78,067 microjoules, 0.37%)</title><rect x="46.9" y="469" width="4.3" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="49.88" y="479.5" ></text>
+</g>
+<g >
+<title>do_blocks (10,503,038 microjoules, 49.66%)</title><rect x="264.7" y="533" width="586.0" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="267.75" y="543.5" >do_blocks</text>
+</g>
+<g >
+<title>wpdb::get_col (76,972 microjoules, 0.36%)</title><rect x="971.3" y="437" width="4.3" height="15.0" fill="rgb(207,12,3)" rx="2" ry="2" />
+<text  x="974.32" y="447.5" ></text>
+</g>
+<g >
+<title>preg_split (62,603 microjoules, 0.30%)</title><rect x="1172.4" y="597" width="3.5" height="15.0" fill="rgb(230,116,27)" rx="2" ry="2" />
+<text  x="1175.37" y="607.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON_Resolver::get_theme_data (44,752 microjoules, 0.21%)</title><rect x="719.3" y="293" width="2.5" height="15.0" fill="rgb(228,106,25)" rx="2" ry="2" />
+<text  x="722.32" y="303.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON_Data::__construct (103,335 microjoules, 0.49%)</title><rect x="697.9" y="277" width="5.7" height="15.0" fill="rgb(232,127,30)" rx="2" ry="2" />
+<text  x="700.88" y="287.5" ></text>
+</g>
+<g >
+<title>WP_Block_Patterns_Registry::get_content (128,962 microjoules, 0.61%)</title><rect x="264.7" y="437" width="7.2" height="15.0" fill="rgb(242,171,40)" rx="2" ry="2" />
+<text  x="267.75" y="447.5" ></text>
+</g>
+<g >
+<title>wpdb::get_col (86,783 microjoules, 0.41%)</title><rect x="991.2" y="437" width="4.9" height="15.0" fill="rgb(207,12,3)" rx="2" ry="2" />
+<text  x="994.25" y="447.5" ></text>
+</g>
+<g >
+<title>get_query_template (1,374,000 microjoules, 6.50%)</title><rect x="985.2" y="549" width="76.6" height="15.0" fill="rgb(207,10,2)" rx="2" ry="2" />
+<text  x="988.18" y="559.5" >get_quer..</text>
+</g>
+<g >
+<title>wpdb::get_col (63,851 microjoules, 0.30%)</title><rect x="742.7" y="213" width="3.5" height="15.0" fill="rgb(207,12,3)" rx="2" ry="2" />
+<text  x="745.65" y="223.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::get_valid_block_style_variations (41,545 microjoules, 0.20%)</title><rect x="449.1" y="229" width="2.3" height="15.0" fill="rgb(242,172,41)" rx="2" ry="2" />
+<text  x="452.12" y="239.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON_Resolver::get_merged_data (741,974 microjoules, 3.51%)</title><rect x="648.7" y="309" width="41.4" height="15.0" fill="rgb(251,214,51)" rx="2" ry="2" />
+<text  x="651.67" y="319.5" >WP_..</text>
+</g>
+<g >
+<title>wpdb::get_row (158,007 microjoules, 0.75%)</title><rect x="198.3" y="469" width="8.8" height="15.0" fill="rgb(239,160,38)" rx="2" ry="2" />
+<text  x="201.32" y="479.5" ></text>
+</g>
+<g >
+<title>WP_Query::query (304,040 microjoules, 1.44%)</title><rect x="958.7" y="469" width="16.9" height="15.0" fill="rgb(215,49,11)" rx="2" ry="2" />
+<text  x="961.66" y="479.5" ></text>
+</g>
+<g >
+<title>WP_Query::query (351,610 microjoules, 1.66%)</title><rect x="670.5" y="261" width="19.6" height="15.0" fill="rgb(215,49,11)" rx="2" ry="2" />
+<text  x="673.45" y="271.5" ></text>
+</g>
+<g >
+<title>in_array (70,089 microjoules, 0.33%)</title><rect x="925.3" y="293" width="4.0" height="15.0" fill="rgb(253,221,53)" rx="2" ry="2" />
+<text  x="928.35" y="303.5" ></text>
+</g>
+<g >
+<title>apply_filters (1,559,272 microjoules, 7.37%)</title><rect x="648.7" y="373" width="87.0" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="651.67" y="383.5" >apply_filt..</text>
+</g>
+<g >
+<title>WP_Theme_JSON_Data::__construct (67,299 microjoules, 0.32%)</title><rect x="690.1" y="261" width="3.7" height="15.0" fill="rgb(232,127,30)" rx="2" ry="2" />
+<text  x="693.07" y="271.5" ></text>
+</g>
+<g >
+<title>WP_Style_Engine::compile_css (52,153 microjoules, 0.25%)</title><rect x="380.0" y="133" width="2.9" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="382.96" y="143.5" ></text>
+</g>
+<g >
+<title>get_custom_logo (119,452 microjoules, 0.56%)</title><rect x="762.9" y="357" width="6.7" height="15.0" fill="rgb(213,37,8)" rx="2" ry="2" />
+<text  x="765.90" y="367.5" ></text>
+</g>
+<g >
+<title>WP_Block::render (41,545 microjoules, 0.20%)</title><rect x="806.1" y="181" width="2.3" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="809.08" y="191.5" ></text>
+</g>
+<g >
+<title>_wp_array_get (80,747 microjoules, 0.38%)</title><rect x="1132.3" y="613" width="4.5" height="15.0" fill="rgb(205,1,0)" rx="2" ry="2" />
+<text  x="1135.30" y="623.5" ></text>
+</g>
+<g >
+<title>mysqli_query (115,503 microjoules, 0.55%)</title><rect x="683.6" y="181" width="6.5" height="15.0" fill="rgb(208,18,4)" rx="2" ry="2" />
+<text  x="686.62" y="191.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::__construct (209,075 microjoules, 0.99%)</title><rect x="449.1" y="245" width="11.7" height="15.0" fill="rgb(238,152,36)" rx="2" ry="2" />
+<text  x="452.12" y="255.5" ></text>
+</g>
+<g >
+<title>wpdb::_do_query (86,783 microjoules, 0.41%)</title><rect x="991.2" y="405" width="4.9" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="994.25" y="415.5" ></text>
+</g>
+<g >
+<title>wpdb::__construct (580,875 microjoules, 2.75%)</title><rect x="207.1" y="517" width="32.4" height="15.0" fill="rgb(225,92,22)" rx="2" ry="2" />
+<text  x="210.14" y="527.5" >wp..</text>
+</g>
+<g >
+<title>wpdb::query (63,851 microjoules, 0.30%)</title><rect x="742.7" y="197" width="3.5" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="745.65" y="207.5" ></text>
+</g>
+<g >
+<title>register_shutdown_function (48,987 microjoules, 0.23%)</title><rect x="1169.6" y="613" width="2.8" height="15.0" fill="rgb(240,161,38)" rx="2" ry="2" />
+<text  x="1172.63" y="623.5" ></text>
+</g>
+<g >
+<title>wp_default_styles (47,795 microjoules, 0.23%)</title><rect x="132.0" y="389" width="2.7" height="15.0" fill="rgb(240,162,38)" rx="2" ry="2" />
+<text  x="135.00" y="399.5" ></text>
+</g>
+<g >
+<title>register_block_type_from_metadata (57,675 microjoules, 0.27%)</title><rect x="122.5" y="469" width="3.2" height="15.0" fill="rgb(212,32,7)" rx="2" ry="2" />
+<text  x="125.48" y="479.5" ></text>
+</g>
+<g >
+<title>WP_Query::get_posts (54,857 microjoules, 0.26%)</title><rect x="746.2" y="261" width="3.1" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="749.21" y="271.5" ></text>
+</g>
+<g >
+<title>mysqli_query (201,913 microjoules, 0.95%)</title><rect x="1085.4" y="357" width="11.3" height="15.0" fill="rgb(208,18,4)" rx="2" ry="2" />
+<text  x="1088.42" y="367.5" ></text>
+</g>
+<g >
+<title>wpdb::query (120,807 microjoules, 0.57%)</title><rect x="1096.7" y="469" width="6.7" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="1099.68" y="479.5" ></text>
+</g>
+<g >
+<title>wp_scripts (187,816 microjoules, 0.89%)</title><rect x="840.2" y="485" width="10.5" height="15.0" fill="rgb(244,182,43)" rx="2" ry="2" />
+<text  x="843.21" y="495.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::get_styles_block_nodes (59,740 microjoules, 0.28%)</title><rect x="869.3" y="389" width="3.3" height="15.0" fill="rgb(233,131,31)" rx="2" ry="2" />
+<text  x="872.26" y="399.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::remove_keys_not_in_schema (95,382 microjoules, 0.45%)</title><rect x="1043.3" y="293" width="5.3" height="15.0" fill="rgb(205,0,0)" rx="2" ry="2" />
+<text  x="1046.29" y="303.5" ></text>
+</g>
+<g >
+<title>&lt;main&gt; (65,666 microjoules, 0.31%)</title><rect x="40.9" y="501" width="3.6" height="15.0" fill="rgb(205,3,0)" rx="2" ry="2" />
+<text  x="43.88" y="511.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON_Resolver::get_merged_data (569,113 microjoules, 2.69%)</title><rect x="690.1" y="309" width="31.7" height="15.0" fill="rgb(251,214,51)" rx="2" ry="2" />
+<text  x="693.07" y="319.5" >WP..</text>
+</g>
+<g >
+<title>WP_HTML_Tag_Processor::next_tag (54,526 microjoules, 0.26%)</title><rect x="397.2" y="37" width="3.0" height="15.0" fill="rgb(219,66,15)" rx="2" ry="2" />
+<text  x="400.20" y="47.5" ></text>
+</g>
+<g >
+<title>wp_styles (47,795 microjoules, 0.23%)</title><rect x="132.0" y="469" width="2.7" height="15.0" fill="rgb(240,164,39)" rx="2" ry="2" />
+<text  x="135.00" y="479.5" ></text>
+</g>
+<g >
+<title>get_bloginfo (47,795 microjoules, 0.23%)</title><rect x="646.0" y="341" width="2.7" height="15.0" fill="rgb(254,228,54)" rx="2" ry="2" />
+<text  x="649.01" y="351.5" ></text>
+</g>
+<g >
+<title>WP_Block_Styles_Registry::get_registered_styles_for_block (75,224 microjoules, 0.36%)</title><rect x="1005.7" y="373" width="4.2" height="15.0" fill="rgb(234,135,32)" rx="2" ry="2" />
+<text  x="1008.73" y="383.5" ></text>
+</g>
+<g >
+<title>WP_Hook::apply_filters (1,657,016 microjoules, 7.83%)</title><rect x="866.2" y="501" width="92.5" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="869.21" y="511.5" >WP_Hook::ap..</text>
+</g>
+<g >
+<title>wpdb::_do_query (244,236 microjoules, 1.15%)</title><rect x="749.3" y="213" width="13.6" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="752.28" y="223.5" ></text>
+</g>
+<g >
+<title>do_blocks (137,788 microjoules, 0.65%)</title><rect x="392.6" y="197" width="7.6" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="395.55" y="207.5" ></text>
+</g>
+<g >
+<title>is_rtl (57,675 microjoules, 0.27%)</title><rect x="174.7" y="453" width="3.3" height="15.0" fill="rgb(245,185,44)" rx="2" ry="2" />
+<text  x="177.75" y="463.5" ></text>
+</g>
+<g >
+<title>_wp_array_get (72,115 microjoules, 0.34%)</title><rect x="918.1" y="357" width="4.0" height="15.0" fill="rgb(205,1,0)" rx="2" ry="2" />
+<text  x="921.11" y="367.5" ></text>
+</g>
+<g >
+<title>&lt;main&gt; (140,890 microjoules, 0.67%)</title><rect x="36.7" y="517" width="7.8" height="15.0" fill="rgb(205,3,0)" rx="2" ry="2" />
+<text  x="39.68" y="527.5" ></text>
+</g>
+<g >
+<title>wp_render_layout_support_flag (65,666 microjoules, 0.31%)</title><rect x="540.6" y="277" width="3.6" height="15.0" fill="rgb(207,9,2)" rx="2" ry="2" />
+<text  x="543.57" y="287.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::scope_selector (47,795 microjoules, 0.23%)</title><rect x="323.7" y="213" width="2.6" height="15.0" fill="rgb(229,111,26)" rx="2" ry="2" />
+<text  x="326.67" y="223.5" ></text>
+</g>
+<g >
+<title>translate_settings_using_i18n_schema (76,055 microjoules, 0.36%)</title><rect x="715.1" y="229" width="4.2" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="718.08" y="239.5" ></text>
+</g>
+<g >
+<title>WP_Tax_Query::get_sql (48,557 microjoules, 0.23%)</title><rect x="964.4" y="437" width="2.7" height="15.0" fill="rgb(212,35,8)" rx="2" ry="2" />
+<text  x="967.37" y="447.5" ></text>
+</g>
+<g >
+<title>WP_Tax_Query::transform_query (48,557 microjoules, 0.23%)</title><rect x="964.4" y="357" width="2.7" height="15.0" fill="rgb(211,30,7)" rx="2" ry="2" />
+<text  x="967.37" y="367.5" ></text>
+</g>
+<g >
+<title>convert_smilies (99,625 microjoules, 0.47%)</title><rect x="259.2" y="533" width="5.5" height="15.0" fill="rgb(235,140,33)" rx="2" ry="2" />
+<text  x="262.19" y="543.5" ></text>
+</g>
+<g >
+<title>WP_Tax_Query::get_sql_for_query (48,557 microjoules, 0.23%)</title><rect x="964.4" y="405" width="2.7" height="15.0" fill="rgb(216,53,12)" rx="2" ry="2" />
+<text  x="967.37" y="415.5" ></text>
+</g>
+<g >
+<title>apply_filters (51,830 microjoules, 0.25%)</title><rect x="239.5" y="501" width="2.9" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="242.54" y="511.5" ></text>
+</g>
+<g >
+<title>mysqli_real_connect (414,452 microjoules, 1.96%)</title><rect x="207.1" y="485" width="23.2" height="15.0" fill="rgb(219,66,15)" rx="2" ry="2" />
+<text  x="210.14" y="495.5" >m..</text>
+</g>
+<g >
+<title>WP_Interactivity_API::get_directive_entries (74,517 microjoules, 0.35%)</title><rect x="769.6" y="309" width="4.1" height="15.0" fill="rgb(252,216,51)" rx="2" ry="2" />
+<text  x="772.56" y="319.5" ></text>
+</g>
+<g >
+<title>WP_Hook::do_action (2,280,684 microjoules, 10.78%)</title><rect x="68.2" y="517" width="127.2" height="15.0" fill="rgb(233,129,30)" rx="2" ry="2" />
+<text  x="71.18" y="527.5" >WP_Hook::do_act..</text>
+</g>
+<g >
+<title>array_pop (64,412 microjoules, 0.30%)</title><rect x="784.6" y="357" width="3.6" height="15.0" fill="rgb(228,106,25)" rx="2" ry="2" />
+<text  x="787.62" y="367.5" ></text>
+</g>
+<g >
+<title>wp_render_layout_support_flag (54,526 microjoules, 0.26%)</title><rect x="397.2" y="53" width="3.0" height="15.0" fill="rgb(207,9,2)" rx="2" ry="2" />
+<text  x="400.20" y="63.5" ></text>
+</g>
+<g >
+<title>mysqli_query (63,851 microjoules, 0.30%)</title><rect x="742.7" y="165" width="3.5" height="15.0" fill="rgb(208,18,4)" rx="2" ry="2" />
+<text  x="745.65" y="175.5" ></text>
+</g>
+<g >
+<title>get_locale (158,007 microjoules, 0.75%)</title><rect x="198.3" y="501" width="8.8" height="15.0" fill="rgb(251,214,51)" rx="2" ry="2" />
+<text  x="201.32" y="511.5" ></text>
+</g>
+<g >
+<title>register_block_core_pattern (72,748 microjoules, 0.34%)</title><rect x="114.9" y="485" width="4.1" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="117.93" y="495.5" ></text>
+</g>
+<g >
+<title>json_decode (162,448 microjoules, 0.77%)</title><rect x="1052.8" y="389" width="9.0" height="15.0" fill="rgb(241,166,39)" rx="2" ry="2" />
+<text  x="1055.77" y="399.5" ></text>
+</g>
+<g >
+<title>WP_Navigation_Block_Renderer::is_interactive (54,857 microjoules, 0.26%)</title><rect x="746.2" y="325" width="3.1" height="15.0" fill="rgb(217,56,13)" rx="2" ry="2" />
+<text  x="749.21" y="335.5" ></text>
+</g>
+<g >
+<title>wp_get_script_tag (44,752 microjoules, 0.21%)</title><rect x="860.7" y="437" width="2.5" height="15.0" fill="rgb(251,215,51)" rx="2" ry="2" />
+<text  x="863.68" y="447.5" ></text>
+</g>
+<g >
+<title>WP_Duotone::render_duotone_support (741,974 microjoules, 3.51%)</title><rect x="648.7" y="341" width="41.4" height="15.0" fill="rgb(221,76,18)" rx="2" ry="2" />
+<text  x="651.67" y="351.5" >WP_..</text>
+</g>
+<g >
+<title>render_block_core_site_logo (119,452 microjoules, 0.56%)</title><rect x="762.9" y="373" width="6.7" height="15.0" fill="rgb(230,116,27)" rx="2" ry="2" />
+<text  x="765.90" y="383.5" ></text>
+</g>
+<g >
+<title>require_wp_db (580,875 microjoules, 2.75%)</title><rect x="207.1" y="533" width="32.4" height="15.0" fill="rgb(223,83,19)" rx="2" ry="2" />
+<text  x="210.14" y="543.5" >re..</text>
+</g>
+<g >
+<title>WP_Hook::do_action (99,278 microjoules, 0.47%)</title><rect x="860.7" y="517" width="5.5" height="15.0" fill="rgb(233,129,30)" rx="2" ry="2" />
+<text  x="863.68" y="527.5" ></text>
+</g>
+<g >
+<title>array_intersect (76,055 microjoules, 0.36%)</title><rect x="967.1" y="421" width="4.2" height="15.0" fill="rgb(230,118,28)" rx="2" ry="2" />
+<text  x="970.08" y="431.5" ></text>
+</g>
+<g >
+<title>WP::query_posts (1,013,909 microjoules, 4.79%)</title><rect x="1061.8" y="549" width="56.6" height="15.0" fill="rgb(239,159,38)" rx="2" ry="2" />
+<text  x="1064.83" y="559.5" >WP::q..</text>
+</g>
+<g >
+<title>WP_Theme_JSON::get_layout_styles (64,412 microjoules, 0.30%)</title><rect x="908.4" y="357" width="3.6" height="15.0" fill="rgb(216,53,12)" rx="2" ry="2" />
+<text  x="911.38" y="367.5" ></text>
+</g>
+<g >
+<title>WP_Block::render (779,930 microjoules, 3.69%)</title><rect x="376.9" y="277" width="43.5" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="379.90" y="287.5" >WP_B..</text>
+</g>
+<g >
+<title>trim (75,224 microjoules, 0.36%)</title><rect x="441.6" y="293" width="4.2" height="15.0" fill="rgb(245,185,44)" rx="2" ry="2" />
+<text  x="444.59" y="303.5" ></text>
+</g>
+<g >
+<title>WP_Block_Type_Registry::register (72,748 microjoules, 0.34%)</title><rect x="114.9" y="453" width="4.1" height="15.0" fill="rgb(222,80,19)" rx="2" ry="2" />
+<text  x="117.93" y="463.5" ></text>
+</g>
+<g >
+<title>wpdb::get_results (125,315 microjoules, 0.59%)</title><rect x="735.7" y="197" width="7.0" height="15.0" fill="rgb(234,136,32)" rx="2" ry="2" />
+<text  x="738.66" y="207.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON_Resolver::read_json_file (89,119 microjoules, 0.42%)</title><rect x="659.1" y="277" width="5.0" height="15.0" fill="rgb(220,69,16)" rx="2" ry="2" />
+<text  x="662.09" y="287.5" ></text>
+</g>
+<g >
+<title>register_block_type_from_metadata (112,939 microjoules, 0.53%)</title><rect x="125.7" y="469" width="6.3" height="15.0" fill="rgb(212,32,7)" rx="2" ry="2" />
+<text  x="128.70" y="479.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON_Resolver::get_core_data (89,119 microjoules, 0.42%)</title><rect x="659.1" y="293" width="5.0" height="15.0" fill="rgb(212,36,8)" rx="2" ry="2" />
+<text  x="662.09" y="303.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::get_default_slugs (67,299 microjoules, 0.32%)</title><rect x="690.1" y="277" width="3.7" height="15.0" fill="rgb(220,69,16)" rx="2" ry="2" />
+<text  x="693.07" y="287.5" ></text>
+</g>
+<g >
+<title>wpdb::query (115,503 microjoules, 0.55%)</title><rect x="683.6" y="213" width="6.5" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="686.62" y="223.5" ></text>
+</g>
+<g >
+<title>register_block_core_calendar (70,900 microjoules, 0.34%)</title><rect x="100.5" y="485" width="3.9" height="15.0" fill="rgb(248,202,48)" rx="2" ry="2" />
+<text  x="103.49" y="495.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON_Resolver::get_user_data (406,388 microjoules, 1.92%)</title><rect x="667.4" y="293" width="22.7" height="15.0" fill="rgb(220,73,17)" rx="2" ry="2" />
+<text  x="670.39" y="303.5" >W..</text>
+</g>
+<g >
+<title>&lt;main&gt; (17,004,737 microjoules, 80.39%)</title><rect x="10.0" y="565" width="948.7" height="15.0" fill="rgb(205,3,0)" rx="2" ry="2" />
+<text  x="13.00" y="575.5" >&lt;main&gt;</text>
+</g>
+<g >
+<title>WP_Theme_JSON::sanitize (75,224 microjoules, 0.36%)</title><rect x="536.4" y="213" width="4.2" height="15.0" fill="rgb(229,113,27)" rx="2" ry="2" />
+<text  x="539.38" y="223.5" ></text>
+</g>
+<g >
+<title>render_block (497,847 microjoules, 2.35%)</title><rect x="800.4" y="389" width="27.8" height="15.0" fill="rgb(237,147,35)" rx="2" ry="2" />
+<text  x="803.39" y="399.5" >r..</text>
+</g>
+<g >
+<title>WP_Navigation_Block_Renderer::is_interactive (244,236 microjoules, 1.15%)</title><rect x="749.3" y="325" width="13.6" height="15.0" fill="rgb(217,56,13)" rx="2" ry="2" />
+<text  x="752.28" y="335.5" ></text>
+</g>
+<g >
+<title>WP_Hook::apply_filters (48,987 microjoules, 0.23%)</title><rect x="311.1" y="293" width="2.7" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="314.10" y="303.5" ></text>
+</g>
+<g >
+<title>do_blocks (70,900 microjoules, 0.34%)</title><rect x="303.2" y="261" width="4.0" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="306.21" y="271.5" ></text>
+</g>
+<g >
+<title>WP_Script_Modules::print_script_module (44,752 microjoules, 0.21%)</title><rect x="860.7" y="469" width="2.5" height="15.0" fill="rgb(216,54,13)" rx="2" ry="2" />
+<text  x="863.68" y="479.5" ></text>
+</g>
+<g >
+<title>apply_filters (67,299 microjoules, 0.32%)</title><rect x="271.9" y="405" width="3.8" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="274.94" y="415.5" ></text>
+</g>
+<g >
+<title>array_pop (54,526 microjoules, 0.26%)</title><rect x="548.9" y="309" width="3.0" height="15.0" fill="rgb(228,106,25)" rx="2" ry="2" />
+<text  x="551.88" y="319.5" ></text>
+</g>
+<g >
+<title>wpdb::query (316,914 microjoules, 1.50%)</title><rect x="420.4" y="197" width="17.7" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="423.41" y="207.5" ></text>
+</g>
+<g >
+<title>mysqli_query (86,703 microjoules, 0.41%)</title><rect x="234.7" y="469" width="4.8" height="15.0" fill="rgb(208,18,4)" rx="2" ry="2" />
+<text  x="237.71" y="479.5" ></text>
+</g>
+<g >
+<title>do_action (1,657,016 microjoules, 7.83%)</title><rect x="866.2" y="533" width="92.5" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="869.21" y="543.5" >do_action</text>
+</g>
+<g >
+<title>mysqli_query (58,766 microjoules, 0.28%)</title><rect x="1064.1" y="405" width="3.3" height="15.0" fill="rgb(208,18,4)" rx="2" ry="2" />
+<text  x="1067.15" y="415.5" ></text>
+</g>
+<g >
+<title>wpdb::_do_query (323,825 microjoules, 1.53%)</title><rect x="75.0" y="341" width="18.1" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="78.04" y="351.5" ></text>
+</g>
+<g >
+<title>wpdb::get_results (229,805 microjoules, 1.09%)</title><rect x="242.4" y="485" width="12.9" height="15.0" fill="rgb(234,136,32)" rx="2" ry="2" />
+<text  x="245.43" y="495.5" ></text>
+</g>
+<g >
+<title>traverse_and_serialize_blocks (65,666 microjoules, 0.31%)</title><rect x="1182.5" y="613" width="3.7" height="15.0" fill="rgb(205,3,0)" rx="2" ry="2" />
+<text  x="1185.49" y="623.5" ></text>
+</g>
+<g >
+<title>WP_Style_Engine_CSS_Declarations::get_declarations_string (127,764 microjoules, 0.60%)</title><rect x="922.1" y="341" width="7.2" height="15.0" fill="rgb(227,103,24)" rx="2" ry="2" />
+<text  x="925.13" y="351.5" ></text>
+</g>
+<g >
+<title>WP_Block_Parser::proceed (51,730 microjoules, 0.24%)</title><rect x="281.3" y="325" width="2.9" height="15.0" fill="rgb(207,10,2)" rx="2" ry="2" />
+<text  x="284.30" y="335.5" ></text>
+</g>
+<g >
+<title>wpdb::_do_query (229,805 microjoules, 1.09%)</title><rect x="242.4" y="453" width="12.9" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="245.43" y="463.5" ></text>
+</g>
+<g >
+<title>wp_get_global_settings (144,957 microjoules, 0.69%)</title><rect x="894.7" y="309" width="8.1" height="15.0" fill="rgb(234,135,32)" rx="2" ry="2" />
+<text  x="897.70" y="319.5" ></text>
+</g>
+<g >
+<title>wpdb::_do_query (54,526 microjoules, 0.26%)</title><rect x="1148.1" y="501" width="3.1" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="1151.11" y="511.5" ></text>
+</g>
+<g >
+<title>WP_HTML_Tag_Processor::base_class_next_token (144,957 microjoules, 0.69%)</title><rect x="1140.0" y="597" width="8.1" height="15.0" fill="rgb(208,15,3)" rx="2" ry="2" />
+<text  x="1143.02" y="607.5" ></text>
+</g>
+<g >
+<title>wp_render_block_style_variation_support_styles (252,798 microjoules, 1.20%)</title><rect x="406.3" y="229" width="14.1" height="15.0" fill="rgb(251,213,51)" rx="2" ry="2" />
+<text  x="409.31" y="239.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::sanitize (153,194 microjoules, 0.72%)</title><rect x="706.5" y="245" width="8.6" height="15.0" fill="rgb(229,113,27)" rx="2" ry="2" />
+<text  x="709.53" y="255.5" ></text>
+</g>
+<g >
+<title>safecss_filter_attr (64,412 microjoules, 0.30%)</title><rect x="908.4" y="325" width="3.6" height="15.0" fill="rgb(245,184,44)" rx="2" ry="2" />
+<text  x="911.38" y="335.5" ></text>
+</g>
+<g >
+<title>register_block_type_from_metadata (85,919 microjoules, 0.41%)</title><rect x="104.4" y="469" width="4.8" height="15.0" fill="rgb(212,32,7)" rx="2" ry="2" />
+<text  x="107.45" y="479.5" ></text>
+</g>
+<g >
+<title>register_block_core_term_template (112,939 microjoules, 0.53%)</title><rect x="125.7" y="485" width="6.3" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="128.70" y="495.5" ></text>
+</g>
+<g >
+<title>WP_Duotone::get_all_global_style_block_names (741,974 microjoules, 3.51%)</title><rect x="648.7" y="325" width="41.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="651.67" y="335.5" >WP_..</text>
+</g>
+<g >
+<title>WP_Block_Parser::parse (90,656 microjoules, 0.43%)</title><rect x="795.3" y="373" width="5.1" height="15.0" fill="rgb(242,173,41)" rx="2" ry="2" />
+<text  x="798.34" y="383.5" ></text>
+</g>
+<g >
+<title>do_action (2,344,356 microjoules, 11.08%)</title><rect x="64.6" y="533" width="130.8" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="67.63" y="543.5" >do_action</text>
+</g>
+<g >
+<title>render_block (3,384,503 microjoules, 16.00%)</title><rect x="642.4" y="453" width="188.8" height="15.0" fill="rgb(237,147,35)" rx="2" ry="2" />
+<text  x="645.41" y="463.5" >render_block</text>
+</g>
+<g >
+<title>wp_render_layout_support_flag (817,298 microjoules, 3.86%)</title><rect x="690.1" y="341" width="45.6" height="15.0" fill="rgb(207,9,2)" rx="2" ry="2" />
+<text  x="693.07" y="351.5" >wp_r..</text>
+</g>
+<g >
+<title>WP_Hook::apply_filters (131,485 microjoules, 0.62%)</title><rect x="556.1" y="309" width="7.3" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="559.09" y="319.5" ></text>
+</g>
+<g >
+<title>_wp_array_get (72,115 microjoules, 0.34%)</title><rect x="918.1" y="341" width="4.0" height="15.0" fill="rgb(205,1,0)" rx="2" ry="2" />
+<text  x="921.11" y="351.5" ></text>
+</g>
+<g >
+<title>do_blocks (5,640,069 microjoules, 26.66%)</title><rect x="284.2" y="389" width="314.6" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="287.19" y="399.5" >do_blocks</text>
+</g>
+<g >
+<title>wpdb::get_results (62,603 microjoules, 0.30%)</title><rect x="438.1" y="229" width="3.5" height="15.0" fill="rgb(234,136,32)" rx="2" ry="2" />
+<text  x="441.09" y="239.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::merge (624,950 microjoules, 2.95%)</title><rect x="331.9" y="229" width="34.9" height="15.0" fill="rgb(245,185,44)" rx="2" ry="2" />
+<text  x="334.93" y="239.5" >WP..</text>
+</g>
+<g >
+<title>WP_Navigation_Block_Renderer::get_inner_blocks (189,166 microjoules, 0.89%)</title><rect x="735.7" y="341" width="10.5" height="15.0" fill="rgb(233,130,31)" rx="2" ry="2" />
+<text  x="738.66" y="351.5" ></text>
+</g>
+<g >
+<title>get_query_template (475,443 microjoules, 2.25%)</title><rect x="958.7" y="549" width="26.5" height="15.0" fill="rgb(207,10,2)" rx="2" ry="2" />
+<text  x="961.66" y="559.5" >g..</text>
+</g>
+<g >
+<title>WP_Scripts::__construct (187,816 microjoules, 0.89%)</title><rect x="840.2" y="469" width="10.5" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="843.21" y="479.5" ></text>
+</g>
+<g >
+<title>WP_Hook::apply_filters (252,798 microjoules, 1.20%)</title><rect x="406.3" y="245" width="14.1" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="409.31" y="255.5" ></text>
+</g>
+<g >
+<title>mysqli_query (229,805 microjoules, 1.09%)</title><rect x="242.4" y="437" width="12.9" height="15.0" fill="rgb(208,18,4)" rx="2" ry="2" />
+<text  x="245.43" y="447.5" ></text>
+</g>
+<g >
+<title>WP_Hook::apply_filters (67,299 microjoules, 0.32%)</title><rect x="765.8" y="293" width="3.8" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="768.81" y="303.5" ></text>
+</g>
+<g >
+<title>WP_Hook::apply_filters (1,764,812 microjoules, 8.34%)</title><rect x="445.8" y="293" width="98.4" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="448.78" y="303.5" >WP_Hook::ap..</text>
+</g>
+<g >
+<title>wpdb::prepare (63,672 microjoules, 0.30%)</title><rect x="1114.8" y="501" width="3.6" height="15.0" fill="rgb(241,168,40)" rx="2" ry="2" />
+<text  x="1117.84" y="511.5" ></text>
+</g>
+<g >
+<title>register_core_block_types_from_metadata (137,199 microjoules, 0.65%)</title><rect x="187.8" y="485" width="7.6" height="15.0" fill="rgb(210,23,5)" rx="2" ry="2" />
+<text  x="190.76" y="495.5" ></text>
+</g>
+<g >
+<title>array_intersect (153,194 microjoules, 0.72%)</title><rect x="706.5" y="229" width="8.6" height="15.0" fill="rgb(230,118,28)" rx="2" ry="2" />
+<text  x="709.53" y="239.5" ></text>
+</g>
+<g >
+<title>WP_Navigation_Block_Renderer::get_nav_attributes (65,666 microjoules, 0.31%)</title><rect x="810.0" y="229" width="3.7" height="15.0" fill="rgb(220,69,16)" rx="2" ry="2" />
+<text  x="813.05" y="239.5" ></text>
+</g>
+<g >
+<title>WP_Query::get_posts (65,666 microjoules, 0.31%)</title><rect x="831.2" y="437" width="3.7" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="834.23" y="447.5" ></text>
+</g>
+<g >
+<title>render_block_core_template_part (311,395 microjoules, 1.47%)</title><rect x="382.9" y="213" width="17.3" height="15.0" fill="rgb(209,18,4)" rx="2" ry="2" />
+<text  x="385.87" y="223.5" ></text>
+</g>
+<g >
+<title>wp_default_packages_inline_scripts (75,224 microjoules, 0.36%)</title><rect x="840.2" y="373" width="4.2" height="15.0" fill="rgb(220,73,17)" rx="2" ry="2" />
+<text  x="843.21" y="383.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::get_valid_block_style_variations (51,730 microjoules, 0.24%)</title><rect x="313.8" y="229" width="2.9" height="15.0" fill="rgb(242,172,41)" rx="2" ry="2" />
+<text  x="316.83" y="239.5" ></text>
+</g>
+<g >
+<title>apply_filters (54,526 microjoules, 0.26%)</title><rect x="397.2" y="85" width="3.0" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="400.20" y="95.5" ></text>
+</g>
+<g >
+<title>WP_Block_Patterns_Registry::get_registered (128,962 microjoules, 0.61%)</title><rect x="264.7" y="453" width="7.2" height="15.0" fill="rgb(209,18,4)" rx="2" ry="2" />
+<text  x="267.75" y="463.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON_Resolver::read_json_file (162,448 microjoules, 0.77%)</title><rect x="1052.8" y="421" width="9.0" height="15.0" fill="rgb(220,69,16)" rx="2" ry="2" />
+<text  x="1055.77" y="431.5" ></text>
+</g>
+<g >
+<title>wp_get_global_styles (248,185 microjoules, 1.17%)</title><rect x="721.8" y="325" width="13.9" height="15.0" fill="rgb(208,17,4)" rx="2" ry="2" />
+<text  x="724.82" y="335.5" ></text>
+</g>
+<g >
+<title>_add_block_template_info (1,076,500 microjoules, 5.09%)</title><rect x="1001.8" y="469" width="60.0" height="15.0" fill="rgb(241,167,39)" rx="2" ry="2" />
+<text  x="1004.78" y="479.5" >_add_b..</text>
+</g>
+<g >
+<title>WP_Style_Engine::compile_stylesheet_from_css_rules (127,764 microjoules, 0.60%)</title><rect x="922.1" y="389" width="7.2" height="15.0" fill="rgb(240,162,38)" rx="2" ry="2" />
+<text  x="925.13" y="399.5" ></text>
+</g>
+<g >
+<title>create_initial_post_types (159,208 microjoules, 0.75%)</title><rect x="55.7" y="533" width="8.9" height="15.0" fill="rgb(213,41,9)" rx="2" ry="2" />
+<text  x="58.74" y="543.5" ></text>
+</g>
+<g >
+<title>WP_Block_Supports::apply_block_supports (65,666 microjoules, 0.31%)</title><rect x="810.0" y="197" width="3.7" height="15.0" fill="rgb(251,212,50)" rx="2" ry="2" />
+<text  x="813.05" y="207.5" ></text>
+</g>
+<g >
+<title>is_file (29,574 microjoules, 0.14%)</title><rect x="279.7" y="357" width="1.6" height="15.0" fill="rgb(241,167,40)" rx="2" ry="2" />
+<text  x="282.65" y="367.5" ></text>
+</g>
+<g >
+<title>is_blog_installed (229,805 microjoules, 1.09%)</title><rect x="242.4" y="517" width="12.9" height="15.0" fill="rgb(250,208,49)" rx="2" ry="2" />
+<text  x="245.43" y="527.5" ></text>
+</g>
+<g >
+<title>WP_Block::render (5,025,047 microjoules, 23.76%)</title><rect x="287.0" y="341" width="280.4" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="290.03" y="351.5" >WP_Block::render</text>
+</g>
+<g >
+<title>WP_Block_Parser::next_token (90,656 microjoules, 0.43%)</title><rect x="795.3" y="341" width="5.1" height="15.0" fill="rgb(252,219,52)" rx="2" ry="2" />
+<text  x="798.34" y="351.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::merge (182,108 microjoules, 0.86%)</title><rect x="912.0" y="373" width="10.1" height="15.0" fill="rgb(245,185,44)" rx="2" ry="2" />
+<text  x="914.97" y="383.5" ></text>
+</g>
+<g >
+<title>wpdb::query (121,467 microjoules, 0.57%)</title><rect x="1078.6" y="373" width="6.8" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="1081.64" y="383.5" ></text>
+</g>
+<g >
+<title>preg_match (47,795 microjoules, 0.23%)</title><rect x="262.1" y="517" width="2.6" height="15.0" fill="rgb(230,118,28)" rx="2" ry="2" />
+<text  x="265.08" y="527.5" ></text>
+</g>
+<g >
+<title>wpdb::query (54,526 microjoules, 0.26%)</title><rect x="1148.1" y="517" width="3.1" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="1151.11" y="527.5" ></text>
+</g>
+<g >
+<title>render_block_core_navigation (136,785 microjoules, 0.65%)</title><rect x="806.1" y="261" width="7.6" height="15.0" fill="rgb(239,157,37)" rx="2" ry="2" />
+<text  x="809.08" y="271.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::__construct (70,089 microjoules, 0.33%)</title><rect x="721.8" y="293" width="3.9" height="15.0" fill="rgb(238,152,36)" rx="2" ry="2" />
+<text  x="724.82" y="303.5" ></text>
+</g>
+<g >
+<title>wpdb::remove_placeholder_escape (68,888 microjoules, 0.33%)</title><rect x="1186.2" y="613" width="3.8" height="15.0" fill="rgb(242,170,40)" rx="2" ry="2" />
+<text  x="1189.16" y="623.5" ></text>
+</g>
+<g >
+<title>WP_Hook::apply_filters (83,262 microjoules, 0.39%)</title><rect x="392.6" y="149" width="4.6" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="395.55" y="159.5" ></text>
+</g>
+<g >
+<title>apply_filters (68,888 microjoules, 0.33%)</title><rect x="788.2" y="421" width="3.9" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="791.21" y="431.5" ></text>
+</g>
+<g >
+<title>is_file (50,895 microjoules, 0.24%)</title><rect x="269.1" y="421" width="2.8" height="15.0" fill="rgb(241,167,40)" rx="2" ry="2" />
+<text  x="272.10" y="431.5" ></text>
+</g>
+<g >
+<title>locate_block_template (475,443 microjoules, 2.25%)</title><rect x="958.7" y="533" width="26.5" height="15.0" fill="rgb(219,66,15)" rx="2" ry="2" />
+<text  x="961.66" y="543.5" >l..</text>
+</g>
+<g >
+<title>apply_block_hooks_to_content (101,911 microjoules, 0.48%)</title><rect x="996.1" y="469" width="5.7" height="15.0" fill="rgb(242,170,40)" rx="2" ry="2" />
+<text  x="999.09" y="479.5" ></text>
+</g>
+<g >
+<title>wp_add_global_styles_for_blocks (379,937 microjoules, 1.80%)</title><rect x="869.3" y="405" width="21.2" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="872.26" y="415.5" ></text>
+</g>
+<g >
+<title>WP_Navigation_Block_Renderer::has_submenus (244,236 microjoules, 1.15%)</title><rect x="749.3" y="309" width="13.6" height="15.0" fill="rgb(235,138,33)" rx="2" ry="2" />
+<text  x="752.28" y="319.5" ></text>
+</g>
+<g >
+<title>file_exists (42,019 microjoules, 0.20%)</title><rect x="44.5" y="501" width="2.4" height="15.0" fill="rgb(221,75,18)" rx="2" ry="2" />
+<text  x="47.54" y="511.5" ></text>
+</g>
+<g >
+<title>wpdb::_do_query (153,863 microjoules, 0.73%)</title><rect x="1106.3" y="469" width="8.5" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="1109.26" y="479.5" ></text>
+</g>
+<g >
+<title>substr (76,972 microjoules, 0.36%)</title><rect x="147.6" y="437" width="4.3" height="15.0" fill="rgb(253,221,52)" rx="2" ry="2" />
+<text  x="150.63" y="447.5" ></text>
+</g>
+<g >
+<title>WP_Query::query (173,607 microjoules, 0.82%)</title><rect x="382.9" y="181" width="9.7" height="15.0" fill="rgb(215,49,11)" rx="2" ry="2" />
+<text  x="385.87" y="191.5" ></text>
+</g>
+<g >
+<title>add_action (65,666 microjoules, 0.31%)</title><rect x="40.9" y="485" width="3.6" height="15.0" fill="rgb(209,22,5)" rx="2" ry="2" />
+<text  x="43.88" y="495.5" ></text>
+</g>
+<g >
+<title>WP_Query::get_posts (89,119 microjoules, 0.42%)</title><rect x="1118.4" y="597" width="5.0" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="1121.40" y="607.5" ></text>
+</g>
+<g >
+<title>wpdb::query (48,557 microjoules, 0.23%)</title><rect x="964.4" y="293" width="2.7" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="967.37" y="303.5" ></text>
+</g>
+<g >
+<title>traverse_and_serialize_blocks (101,911 microjoules, 0.48%)</title><rect x="996.1" y="453" width="5.7" height="15.0" fill="rgb(205,3,0)" rx="2" ry="2" />
+<text  x="999.09" y="463.5" ></text>
+</g>
+<g >
+<title>array_unique (144,957 microjoules, 0.69%)</title><rect x="1140.0" y="613" width="8.1" height="15.0" fill="rgb(209,19,4)" rx="2" ry="2" />
+<text  x="1143.02" y="623.5" ></text>
+</g>
+<g >
+<title>wpdb::query (244,236 microjoules, 1.15%)</title><rect x="749.3" y="229" width="13.6" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="752.28" y="239.5" ></text>
+</g>
+<g >
+<title>determine_locale (158,007 microjoules, 0.75%)</title><rect x="198.3" y="517" width="8.8" height="15.0" fill="rgb(236,146,34)" rx="2" ry="2" />
+<text  x="201.32" y="527.5" ></text>
+</g>
+<g >
+<title>_wp_array_get (44,752 microjoules, 0.21%)</title><rect x="876.8" y="357" width="2.5" height="15.0" fill="rgb(205,1,0)" rx="2" ry="2" />
+<text  x="879.76" y="367.5" ></text>
+</g>
+<g >
+<title>wp_cache_get_multiple (63,174 microjoules, 0.30%)</title><rect x="1075.1" y="373" width="3.5" height="15.0" fill="rgb(224,88,21)" rx="2" ry="2" />
+<text  x="1078.12" y="383.5" ></text>
+</g>
+<g >
+<title>WP::main (1,013,909 microjoules, 4.79%)</title><rect x="1061.8" y="565" width="56.6" height="15.0" fill="rgb(215,49,11)" rx="2" ry="2" />
+<text  x="1064.83" y="575.5" >WP::m..</text>
+</g>
+<g >
+<title>wpdb::_do_query (62,603 microjoules, 0.30%)</title><rect x="438.1" y="197" width="3.5" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="441.09" y="207.5" ></text>
+</g>
+<g >
+<title>wpdb::get_results (316,914 microjoules, 1.50%)</title><rect x="420.4" y="213" width="17.7" height="15.0" fill="rgb(234,136,32)" rx="2" ry="2" />
+<text  x="423.41" y="223.5" ></text>
+</g>
+<g >
+<title>wp_style_engine_get_styles (63,174 microjoules, 0.30%)</title><rect x="559.9" y="261" width="3.5" height="15.0" fill="rgb(238,155,37)" rx="2" ry="2" />
+<text  x="562.90" y="271.5" ></text>
+</g>
+<g >
+<title>wp_get_typography_font_size_value (48,557 microjoules, 0.23%)</title><rect x="902.8" y="325" width="2.7" height="15.0" fill="rgb(216,52,12)" rx="2" ry="2" />
+<text  x="905.78" y="335.5" ></text>
+</g>
+<g >
+<title>WP_Term_Query::get_terms (48,557 microjoules, 0.23%)</title><rect x="964.4" y="325" width="2.7" height="15.0" fill="rgb(206,7,1)" rx="2" ry="2" />
+<text  x="967.37" y="335.5" ></text>
+</g>
+<g >
+<title>wp_get_custom_css_post (76,055 microjoules, 0.36%)</title><rect x="890.5" y="389" width="4.2" height="15.0" fill="rgb(232,126,30)" rx="2" ry="2" />
+<text  x="893.45" y="399.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON_Resolver::get_theme_data (62,603 microjoules, 0.30%)</title><rect x="732.2" y="293" width="3.5" height="15.0" fill="rgb(228,106,25)" rx="2" ry="2" />
+<text  x="735.17" y="303.5" ></text>
+</g>
+<g >
+<title>register_shutdown_function (51,830 microjoules, 0.25%)</title><rect x="239.5" y="517" width="2.9" height="15.0" fill="rgb(240,161,38)" rx="2" ry="2" />
+<text  x="242.54" y="527.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::sanitize (100,237 microjoules, 0.47%)</title><rect x="326.3" y="213" width="5.6" height="15.0" fill="rgb(229,113,27)" rx="2" ry="2" />
+<text  x="329.34" y="223.5" ></text>
+</g>
+<g >
+<title>_wp_array_get (76,972 microjoules, 0.36%)</title><rect x="501.2" y="213" width="4.3" height="15.0" fill="rgb(205,1,0)" rx="2" ry="2" />
+<text  x="504.20" y="223.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::sanitize (41,545 microjoules, 0.20%)</title><rect x="493.9" y="229" width="2.3" height="15.0" fill="rgb(229,113,27)" rx="2" ry="2" />
+<text  x="496.88" y="239.5" ></text>
+</g>
+<g >
+<title>WP_Block::render (363,548 microjoules, 1.72%)</title><rect x="380.0" y="229" width="20.2" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="382.96" y="239.5" ></text>
+</g>
+<g >
+<title>apply_filters (231,479 microjoules, 1.09%)</title><rect x="607.7" y="469" width="12.9" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="610.72" y="479.5" ></text>
+</g>
+<g >
+<title>get_site_transient (414,844 microjoules, 1.96%)</title><rect x="70.0" y="437" width="23.1" height="15.0" fill="rgb(239,158,37)" rx="2" ry="2" />
+<text  x="72.96" y="447.5" >g..</text>
+</g>
+<g >
+<title>WP_Block::render (3,329,646 microjoules, 15.74%)</title><rect x="642.4" y="437" width="185.8" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="645.41" y="447.5" >WP_Block::render</text>
+</g>
+<g >
+<title>wp_enqueue_style (70,573 microjoules, 0.33%)</title><rect x="563.4" y="325" width="4.0" height="15.0" fill="rgb(210,24,5)" rx="2" ry="2" />
+<text  x="566.43" y="335.5" ></text>
+</g>
+<g >
+<title>array_keys (65,666 microjoules, 0.31%)</title><rect x="40.9" y="437" width="3.6" height="15.0" fill="rgb(223,87,20)" rx="2" ry="2" />
+<text  x="43.88" y="447.5" ></text>
+</g>
+<g >
+<title>WP_Hook::apply_filters (1,075,520 microjoules, 5.08%)</title><rect x="869.3" y="437" width="60.0" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="872.26" y="447.5" >WP_Hoo..</text>
+</g>
+<g >
+<title>render_block_core_site_title (47,795 microjoules, 0.23%)</title><rect x="646.0" y="357" width="2.7" height="15.0" fill="rgb(250,208,49)" rx="2" ry="2" />
+<text  x="649.01" y="367.5" ></text>
+</g>
+<g >
+<title>register_block_type_from_metadata (101,911 microjoules, 0.48%)</title><rect x="109.2" y="469" width="5.7" height="15.0" fill="rgb(212,32,7)" rx="2" ry="2" />
+<text  x="112.24" y="479.5" ></text>
+</g>
+<g >
+<title>wp_maybe_inline_styles (123,374 microjoules, 0.58%)</title><rect x="929.3" y="485" width="6.8" height="15.0" fill="rgb(237,149,35)" rx="2" ry="2" />
+<text  x="932.26" y="495.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::merge (70,089 microjoules, 0.33%)</title><rect x="1123.4" y="613" width="3.9" height="15.0" fill="rgb(245,185,44)" rx="2" ry="2" />
+<text  x="1126.37" y="623.5" ></text>
+</g>
+<g >
+<title>_prime_term_caches (244,381 microjoules, 1.16%)</title><rect x="1071.8" y="405" width="13.6" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="1074.78" y="415.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::get_block_nodes (91,019 microjoules, 0.43%)</title><rect x="511.5" y="197" width="5.1" height="15.0" fill="rgb(214,41,10)" rx="2" ry="2" />
+<text  x="514.51" y="207.5" ></text>
+</g>
+<g >
+<title>wpdb::get_row (67,299 microjoules, 0.32%)</title><rect x="765.8" y="245" width="3.8" height="15.0" fill="rgb(239,160,38)" rx="2" ry="2" />
+<text  x="768.81" y="255.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::get_block_nodes (72,748 microjoules, 0.34%)</title><rect x="693.8" y="245" width="4.1" height="15.0" fill="rgb(214,41,10)" rx="2" ry="2" />
+<text  x="696.82" y="255.5" ></text>
+</g>
+<g >
+<title>wp_print_styles (403,596 microjoules, 1.91%)</title><rect x="936.1" y="485" width="22.6" height="15.0" fill="rgb(228,109,26)" rx="2" ry="2" />
+<text  x="939.14" y="495.5" >w..</text>
+</g>
+<g >
+<title>WP_Theme_JSON::get_css_variables (245,244 microjoules, 1.16%)</title><rect x="894.7" y="373" width="13.7" height="15.0" fill="rgb(230,115,27)" rx="2" ry="2" />
+<text  x="897.70" y="383.5" ></text>
+</g>
+<g >
+<title>wp_render_block_style_variation_support_styles (239,969 microjoules, 1.13%)</title><rect x="577.1" y="309" width="13.4" height="15.0" fill="rgb(251,213,51)" rx="2" ry="2" />
+<text  x="580.09" y="319.5" ></text>
+</g>
+<g >
+<title>apply_filters (1,130,540 microjoules, 5.34%)</title><rect x="313.8" y="293" width="63.1" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="316.83" y="303.5" >apply_..</text>
+</g>
+<g >
+<title>WP_Script_Modules::print_import_map (54,526 microjoules, 0.26%)</title><rect x="866.2" y="485" width="3.1" height="15.0" fill="rgb(246,193,46)" rx="2" ry="2" />
+<text  x="869.21" y="495.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::__construct (202,172 microjoules, 0.96%)</title><rect x="406.3" y="197" width="11.3" height="15.0" fill="rgb(238,152,36)" rx="2" ry="2" />
+<text  x="409.31" y="207.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::get_block_nodes (59,740 microjoules, 0.28%)</title><rect x="869.3" y="373" width="3.3" height="15.0" fill="rgb(214,41,10)" rx="2" ry="2" />
+<text  x="872.26" y="383.5" ></text>
+</g>
+<g >
+<title>wpdb::get_results (414,844 microjoules, 1.96%)</title><rect x="70.0" y="373" width="23.1" height="15.0" fill="rgb(234,136,32)" rx="2" ry="2" />
+<text  x="72.96" y="383.5" >w..</text>
+</g>
+<g >
+<title>register_block_style_handle (112,939 microjoules, 0.53%)</title><rect x="125.7" y="453" width="6.3" height="15.0" fill="rgb(251,212,50)" rx="2" ry="2" />
+<text  x="128.70" y="463.5" ></text>
+</g>
+<g >
+<title>apply_filters (76,055 microjoules, 0.36%)</title><rect x="715.1" y="149" width="4.2" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="718.08" y="159.5" ></text>
+</g>
+<g >
+<title>WP_HTML_Tag_Processor::next_tag (54,526 microjoules, 0.26%)</title><rect x="866.2" y="437" width="3.1" height="15.0" fill="rgb(219,66,15)" rx="2" ry="2" />
+<text  x="869.21" y="447.5" ></text>
+</g>
+<g >
+<title>WP_Hook::apply_filters (47,795 microjoules, 0.23%)</title><rect x="132.0" y="405" width="2.7" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="135.00" y="415.5" ></text>
+</g>
+<g >
+<title>substr (118,937 microjoules, 0.56%)</title><rect x="1175.9" y="613" width="6.6" height="15.0" fill="rgb(253,221,52)" rx="2" ry="2" />
+<text  x="1178.86" y="623.5" ></text>
+</g>
+<g >
+<title>WP_Navigation_Block_Renderer::render (136,785 microjoules, 0.65%)</title><rect x="806.1" y="245" width="7.6" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="809.08" y="255.5" ></text>
+</g>
+<g >
+<title>wp_style_engine_get_stylesheet_from_context (127,764 microjoules, 0.60%)</title><rect x="922.1" y="405" width="7.2" height="15.0" fill="rgb(225,93,22)" rx="2" ry="2" />
+<text  x="925.13" y="415.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON_Data::__construct (914,052 microjoules, 4.32%)</title><rect x="1001.8" y="421" width="51.0" height="15.0" fill="rgb(232,127,30)" rx="2" ry="2" />
+<text  x="1004.78" y="431.5" >WP_Th..</text>
+</g>
+<g >
+<title>wpdb::get_col (200,431 microjoules, 0.95%)</title><rect x="620.6" y="421" width="11.2" height="15.0" fill="rgb(207,12,3)" rx="2" ry="2" />
+<text  x="623.63" y="431.5" ></text>
+</g>
+<g >
+<title>wp_default_packages_scripts (70,573 microjoules, 0.33%)</title><rect x="844.4" y="373" width="3.9" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="847.41" y="383.5" ></text>
+</g>
+<g >
+<title>render_block_core_post_template (1,159,447 microjoules, 5.48%)</title><rect x="376.9" y="293" width="64.7" height="15.0" fill="rgb(212,33,7)" rx="2" ry="2" />
+<text  x="379.90" y="303.5" >render_..</text>
+</g>
+<g >
+<title>next (48,557 microjoules, 0.23%)</title><rect x="598.8" y="373" width="2.7" height="15.0" fill="rgb(225,96,23)" rx="2" ry="2" />
+<text  x="601.84" y="383.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::sanitize (50,626 microjoules, 0.24%)</title><rect x="581.9" y="261" width="2.8" height="15.0" fill="rgb(229,113,27)" rx="2" ry="2" />
+<text  x="584.92" y="271.5" ></text>
+</g>
+<g >
+<title>_get_block_templates_paths (90,656 microjoules, 0.43%)</title><rect x="980.1" y="469" width="5.1" height="15.0" fill="rgb(250,209,50)" rx="2" ry="2" />
+<text  x="983.12" y="479.5" ></text>
+</g>
+<g >
+<title>wpdb::_do_query (201,913 microjoules, 0.95%)</title><rect x="1085.4" y="373" width="11.3" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="1088.42" y="383.5" ></text>
+</g>
+<g >
+<title>wp_apply_border_support (52,153 microjoules, 0.25%)</title><rect x="380.0" y="165" width="2.9" height="15.0" fill="rgb(207,10,2)" rx="2" ry="2" />
+<text  x="382.96" y="175.5" ></text>
+</g>
+<g >
+<title>wp_fix_server_vars (51,830 microjoules, 0.25%)</title><rect x="239.5" y="533" width="2.9" height="15.0" fill="rgb(216,54,12)" rx="2" ry="2" />
+<text  x="242.54" y="543.5" ></text>
+</g>
+<g >
+<title>wpdb::get_results (54,526 microjoules, 0.26%)</title><rect x="1148.1" y="533" width="3.1" height="15.0" fill="rgb(234,136,32)" rx="2" ry="2" />
+<text  x="1151.11" y="543.5" ></text>
+</g>
+<g >
+<title>WP_Query::query (1,013,909 microjoules, 4.79%)</title><rect x="1061.8" y="533" width="56.6" height="15.0" fill="rgb(215,49,11)" rx="2" ry="2" />
+<text  x="1064.83" y="543.5" >WP_Qu..</text>
+</g>
+<g >
+<title>WP_HTML_Tag_Processor::get_updated_html (62,603 microjoules, 0.30%)</title><rect x="947.0" y="437" width="3.5" height="15.0" fill="rgb(244,183,43)" rx="2" ry="2" />
+<text  x="950.05" y="447.5" ></text>
+</g>
+<g >
+<title>wpdb::query (153,863 microjoules, 0.73%)</title><rect x="1106.3" y="485" width="8.5" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="1109.26" y="495.5" ></text>
+</g>
+<g >
+<title>WP_Term_Query::get_terms (54,526 microjoules, 0.26%)</title><rect x="1148.1" y="549" width="3.1" height="15.0" fill="rgb(206,7,1)" rx="2" ry="2" />
+<text  x="1151.11" y="559.5" ></text>
+</g>
+<g >
+<title>wp_prime_site_option_caches (414,844 microjoules, 1.96%)</title><rect x="70.0" y="421" width="23.1" height="15.0" fill="rgb(230,115,27)" rx="2" ry="2" />
+<text  x="72.96" y="431.5" >w..</text>
+</g>
+<g >
+<title>WP_Tax_Query::clean_query (48,557 microjoules, 0.23%)</title><rect x="964.4" y="373" width="2.7" height="15.0" fill="rgb(217,56,13)" rx="2" ry="2" />
+<text  x="967.37" y="383.5" ></text>
+</g>
+<g >
+<title>wpdb::_do_query (63,851 microjoules, 0.30%)</title><rect x="742.7" y="181" width="3.5" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="745.65" y="191.5" ></text>
+</g>
+<g >
+<title>WP_Query::query (89,119 microjoules, 0.42%)</title><rect x="1118.4" y="613" width="5.0" height="15.0" fill="rgb(215,49,11)" rx="2" ry="2" />
+<text  x="1121.40" y="623.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON_Resolver::get_merged_data (252,898 microjoules, 1.20%)</title><rect x="872.6" y="389" width="14.1" height="15.0" fill="rgb(251,214,51)" rx="2" ry="2" />
+<text  x="875.59" y="399.5" ></text>
+</g>
+<g >
+<title>mysqli_query (114,841 microjoules, 0.54%)</title><rect x="386.1" y="101" width="6.5" height="15.0" fill="rgb(208,18,4)" rx="2" ry="2" />
+<text  x="389.15" y="111.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::get_stylesheet (309,656 microjoules, 1.46%)</title><rect x="894.7" y="389" width="17.3" height="15.0" fill="rgb(232,125,30)" rx="2" ry="2" />
+<text  x="897.70" y="399.5" ></text>
+</g>
+<g >
+<title>strtoupper (54,526 microjoules, 0.26%)</title><rect x="1148.1" y="597" width="3.1" height="15.0" fill="rgb(226,100,23)" rx="2" ry="2" />
+<text  x="1151.11" y="607.5" ></text>
+</g>
+<g >
+<title>register_block_core_term_name (57,675 microjoules, 0.27%)</title><rect x="122.5" y="485" width="3.2" height="15.0" fill="rgb(235,138,33)" rx="2" ry="2" />
+<text  x="125.48" y="495.5" ></text>
+</g>
+<g >
+<title>apply_filters (86,564 microjoules, 0.41%)</title><rect x="577.1" y="261" width="4.8" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="580.09" y="271.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON_Resolver::get_theme_data (430,047 microjoules, 2.03%)</title><rect x="516.6" y="245" width="24.0" height="15.0" fill="rgb(228,106,25)" rx="2" ry="2" />
+<text  x="519.58" y="255.5" >W..</text>
+</g>
+<g >
+<title>WP_Block::render (54,526 microjoules, 0.26%)</title><rect x="397.2" y="101" width="3.0" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="400.20" y="111.5" ></text>
+</g>
+<g >
+<title>WP_Navigation_Block_Renderer::get_inner_block_markup (71,119 microjoules, 0.34%)</title><rect x="806.1" y="229" width="3.9" height="15.0" fill="rgb(224,91,21)" rx="2" ry="2" />
+<text  x="809.08" y="239.5" ></text>
+</g>
+<g >
+<title>__ (48,557 microjoules, 0.23%)</title><rect x="491.2" y="213" width="2.7" height="15.0" fill="rgb(236,143,34)" rx="2" ry="2" />
+<text  x="494.17" y="223.5" ></text>
+</g>
+<g >
+<title>apply_filters (1,848,074 microjoules, 8.74%)</title><rect x="445.8" y="309" width="103.1" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="448.78" y="319.5" >apply_filters</text>
+</g>
+<g >
+<title>load_script_module_textdomain (54,526 microjoules, 0.26%)</title><rect x="863.2" y="469" width="3.0" height="15.0" fill="rgb(233,129,30)" rx="2" ry="2" />
+<text  x="866.17" y="479.5" ></text>
+</g>
+<g >
+<title>is_admin (68,311 microjoules, 0.32%)</title><rect x="373.1" y="245" width="3.8" height="15.0" fill="rgb(213,37,8)" rx="2" ry="2" />
+<text  x="376.09" y="255.5" ></text>
+</g>
+<g >
+<title>get_pages (54,857 microjoules, 0.26%)</title><rect x="746.2" y="293" width="3.1" height="15.0" fill="rgb(221,77,18)" rx="2" ry="2" />
+<text  x="749.21" y="303.5" ></text>
+</g>
+<g >
+<title>WP_Styles::print_inline_style (54,778 microjoules, 0.26%)</title><rect x="950.5" y="437" width="3.1" height="15.0" fill="rgb(234,134,32)" rx="2" ry="2" />
+<text  x="953.54" y="447.5" ></text>
+</g>
+<g >
+<title>WP_Block::render (10,503,038 microjoules, 49.66%)</title><rect x="264.7" y="501" width="586.0" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="267.75" y="511.5" >WP_Block::render</text>
+</g>
+<g >
+<title>apply_filters (57,675 microjoules, 0.27%)</title><rect x="1136.8" y="613" width="3.2" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="1139.81" y="623.5" ></text>
+</g>
+<g >
+<title>WP_Tax_Query::get_sql_clauses (48,557 microjoules, 0.23%)</title><rect x="964.4" y="421" width="2.7" height="15.0" fill="rgb(241,166,39)" rx="2" ry="2" />
+<text  x="967.37" y="431.5" ></text>
+</g>
+<g >
+<title>wpdb::query (58,766 microjoules, 0.28%)</title><rect x="1064.1" y="437" width="3.3" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="1067.15" y="447.5" ></text>
+</g>
+<g >
+<title>WP_Block::render (418,326 microjoules, 1.98%)</title><rect x="376.9" y="245" width="23.3" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="379.90" y="255.5" >W..</text>
+</g>
+<g >
+<title>WP_Query::get_posts (304,040 microjoules, 1.44%)</title><rect x="958.7" y="453" width="16.9" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="961.66" y="463.5" ></text>
+</g>
+<g >
+<title>{closure} (42,019 microjoules, 0.20%)</title><rect x="44.5" y="517" width="2.4" height="15.0" fill="rgb(219,67,16)" rx="2" ry="2" />
+<text  x="47.54" y="527.5" ></text>
+</g>
+<g >
+<title>mysqli_query (47,795 microjoules, 0.23%)</title><rect x="230.3" y="469" width="2.6" height="15.0" fill="rgb(208,18,4)" rx="2" ry="2" />
+<text  x="233.26" y="479.5" ></text>
+</g>
+<g >
+<title>translate_settings_using_i18n_schema (68,311 microjoules, 0.32%)</title><rect x="191.6" y="437" width="3.8" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="194.60" y="447.5" ></text>
+</g>
+<g >
+<title>register_block_core_navigation_submenu (101,911 microjoules, 0.48%)</title><rect x="109.2" y="485" width="5.7" height="15.0" fill="rgb(241,167,40)" rx="2" ry="2" />
+<text  x="112.24" y="495.5" ></text>
+</g>
+<g >
+<title>translate_with_gettext_context (76,055 microjoules, 0.36%)</title><rect x="715.1" y="165" width="4.2" height="15.0" fill="rgb(225,93,22)" rx="2" ry="2" />
+<text  x="718.08" y="175.5" ></text>
+</g>
+<g >
+<title>&lt;main&gt; (19,868,089 microjoules, 93.93%)</title><rect x="10.0" y="597" width="1108.4" height="15.0" fill="rgb(205,3,0)" rx="2" ry="2" />
+<text  x="13.00" y="607.5" >&lt;main&gt;</text>
+</g>
+<g >
+<title>WP_Hook::apply_filters (99,278 microjoules, 0.47%)</title><rect x="860.7" y="501" width="5.5" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="863.68" y="511.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::get_blocks_metadata (101,911 microjoules, 0.48%)</title><rect x="520.6" y="213" width="5.7" height="15.0" fill="rgb(209,18,4)" rx="2" ry="2" />
+<text  x="523.61" y="223.5" ></text>
+</g>
+<g >
+<title>WP_Navigation_Block_Renderer::handle_view_script_module_loading (244,236 microjoules, 1.15%)</title><rect x="749.3" y="341" width="13.6" height="15.0" fill="rgb(231,121,29)" rx="2" ry="2" />
+<text  x="752.28" y="351.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::__construct (153,194 microjoules, 0.72%)</title><rect x="706.5" y="261" width="8.6" height="15.0" fill="rgb(238,152,36)" rx="2" ry="2" />
+<text  x="709.53" y="271.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::get_block_nodes (29,574 microjoules, 0.14%)</title><rect x="730.5" y="245" width="1.7" height="15.0" fill="rgb(214,41,10)" rx="2" ry="2" />
+<text  x="733.52" y="255.5" ></text>
+</g>
+<g >
+<title>do_action_ref_array (47,795 microjoules, 0.23%)</title><rect x="132.0" y="437" width="2.7" height="15.0" fill="rgb(232,126,30)" rx="2" ry="2" />
+<text  x="135.00" y="447.5" ></text>
+</g>
+<g >
+<title>wpdb::query (114,841 microjoules, 0.54%)</title><rect x="386.1" y="133" width="6.5" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="389.15" y="143.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON_Resolver::get_user_data_from_wp_global_styles (351,610 microjoules, 1.66%)</title><rect x="670.5" y="277" width="19.6" height="15.0" fill="rgb(253,221,52)" rx="2" ry="2" />
+<text  x="673.45" y="287.5" ></text>
+</g>
+<g >
+<title>WP_Query::get_posts (351,610 microjoules, 1.66%)</title><rect x="670.5" y="245" width="19.6" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="673.45" y="255.5" ></text>
+</g>
+<g >
+<title>apply_filters (31,925 microjoules, 0.15%)</title><rect x="597.1" y="357" width="1.7" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="600.05" y="367.5" ></text>
+</g>
+<g >
+<title>WP_Block_Supports::init (31,925 microjoules, 0.15%)</title><rect x="68.2" y="485" width="1.8" height="15.0" fill="rgb(235,138,33)" rx="2" ry="2" />
+<text  x="71.18" y="495.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::sanitize (67,299 microjoules, 0.32%)</title><rect x="690.1" y="229" width="3.7" height="15.0" fill="rgb(229,113,27)" rx="2" ry="2" />
+<text  x="693.07" y="239.5" ></text>
+</g>
+<g >
+<title>wp_get_global_stylesheet (491,764 microjoules, 2.32%)</title><rect x="894.7" y="405" width="27.4" height="15.0" fill="rgb(232,127,30)" rx="2" ry="2" />
+<text  x="897.70" y="415.5" >w..</text>
+</g>
+<g >
+<title>mysqli_query (65,666 microjoules, 0.31%)</title><rect x="831.2" y="373" width="3.7" height="15.0" fill="rgb(208,18,4)" rx="2" ry="2" />
+<text  x="834.23" y="383.5" ></text>
+</g>
+<g >
+<title>array_keys (95,382 microjoules, 0.45%)</title><rect x="1043.3" y="277" width="5.3" height="15.0" fill="rgb(223,87,20)" rx="2" ry="2" />
+<text  x="1046.29" y="287.5" ></text>
+</g>
+<g >
+<title>WP_Hook::apply_filters (50,895 microjoules, 0.24%)</title><rect x="604.9" y="469" width="2.8" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="607.88" y="479.5" ></text>
+</g>
+<g >
+<title>apply_filters (101,911 microjoules, 0.48%)</title><rect x="800.4" y="261" width="5.7" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="803.39" y="271.5" ></text>
+</g>
+<g >
+<title>WP_Style_Engine_Processor::get_css (127,764 microjoules, 0.60%)</title><rect x="922.1" y="373" width="7.2" height="15.0" fill="rgb(206,6,1)" rx="2" ry="2" />
+<text  x="925.13" y="383.5" ></text>
+</g>
+<g >
+<title>wpdb::get_col (183,814 microjoules, 0.87%)</title><rect x="679.8" y="229" width="10.3" height="15.0" fill="rgb(207,12,3)" rx="2" ry="2" />
+<text  x="682.81" y="239.5" ></text>
+</g>
+<g >
+<title>parse_blocks (51,730 microjoules, 0.24%)</title><rect x="281.3" y="357" width="2.9" height="15.0" fill="rgb(246,191,45)" rx="2" ry="2" />
+<text  x="284.30" y="367.5" ></text>
+</g>
+<g >
+<title>render_block (54,526 microjoules, 0.26%)</title><rect x="397.2" y="117" width="3.0" height="15.0" fill="rgb(237,147,35)" rx="2" ry="2" />
+<text  x="400.20" y="127.5" ></text>
+</g>
+<g >
+<title>WP_Navigation_Block_Renderer::get_inner_blocks_from_fallback (189,166 microjoules, 0.89%)</title><rect x="735.7" y="325" width="10.5" height="15.0" fill="rgb(218,61,14)" rx="2" ry="2" />
+<text  x="738.66" y="335.5" ></text>
+</g>
+<g >
+<title>WP_Post_Type::__construct (70,089 microjoules, 0.33%)</title><rect x="60.7" y="501" width="3.9" height="15.0" fill="rgb(213,40,9)" rx="2" ry="2" />
+<text  x="63.72" y="511.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON_Resolver::get_theme_data (52,153 microjoules, 0.25%)</title><rect x="587.6" y="277" width="2.9" height="15.0" fill="rgb(228,106,25)" rx="2" ry="2" />
+<text  x="590.56" y="287.5" ></text>
+</g>
+<g >
+<title>wp_replace_in_html_tags (231,479 microjoules, 1.09%)</title><rect x="607.7" y="437" width="12.9" height="15.0" fill="rgb(241,169,40)" rx="2" ry="2" />
+<text  x="610.72" y="447.5" ></text>
+</g>
+<g >
+<title>WP_Query::get_posts (972,364 microjoules, 4.60%)</title><rect x="1064.1" y="517" width="54.3" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="1067.15" y="527.5" >WP_Qu..</text>
+</g>
+<g >
+<title>in_array (327,817 microjoules, 1.55%)</title><rect x="156.5" y="453" width="18.2" height="15.0" fill="rgb(253,221,53)" rx="2" ry="2" />
+<text  x="159.46" y="463.5" ></text>
+</g>
+<g >
+<title>apply_filters (70,573 microjoules, 0.33%)</title><rect x="563.4" y="309" width="4.0" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="566.43" y="319.5" ></text>
+</g>
+<g >
+<title>WP_Navigation_Block_Renderer::get_nav_attributes (54,857 microjoules, 0.26%)</title><rect x="746.2" y="341" width="3.1" height="15.0" fill="rgb(220,69,16)" rx="2" ry="2" />
+<text  x="749.21" y="351.5" ></text>
+</g>
+<g >
+<title>apply_filters (131,485 microjoules, 0.62%)</title><rect x="556.1" y="325" width="7.3" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="559.09" y="335.5" ></text>
+</g>
+<g >
+<title>_override_custom_logo_theme_mod (67,299 microjoules, 0.32%)</title><rect x="765.8" y="277" width="3.8" height="15.0" fill="rgb(210,25,6)" rx="2" ry="2" />
+<text  x="768.81" y="287.5" ></text>
+</g>
+<g >
+<title>_wp_to_kebab_case (144,957 microjoules, 0.69%)</title><rect x="894.7" y="325" width="8.1" height="15.0" fill="rgb(252,217,52)" rx="2" ry="2" />
+<text  x="897.70" y="335.5" ></text>
+</g>
+<g >
+<title>locate_block_template (1,374,000 microjoules, 6.50%)</title><rect x="985.2" y="533" width="76.6" height="15.0" fill="rgb(219,66,15)" rx="2" ry="2" />
+<text  x="988.18" y="543.5" >locate_b..</text>
+</g>
+<g >
+<title>WP::init (158,814 microjoules, 0.75%)</title><rect x="46.9" y="533" width="8.8" height="15.0" fill="rgb(218,63,15)" rx="2" ry="2" />
+<text  x="49.88" y="543.5" ></text>
+</g>
+<g >
+<title>WP_Block::render (2,549,077 microjoules, 12.05%)</title><rect x="646.0" y="421" width="142.2" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="649.01" y="431.5" >WP_Block::render</text>
+</g>
+<g >
+<title>WP_Theme_JSON::sanitize (70,089 microjoules, 0.33%)</title><rect x="721.8" y="277" width="3.9" height="15.0" fill="rgb(229,113,27)" rx="2" ry="2" />
+<text  x="724.82" y="287.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::get_default_slugs (206,350 microjoules, 0.98%)</title><rect x="482.4" y="229" width="11.5" height="15.0" fill="rgb(220,69,16)" rx="2" ry="2" />
+<text  x="485.36" y="239.5" ></text>
+</g>
+<g >
+<title>mysqli_query (158,007 microjoules, 0.75%)</title><rect x="198.3" y="421" width="8.8" height="15.0" fill="rgb(208,18,4)" rx="2" ry="2" />
+<text  x="201.32" y="431.5" ></text>
+</g>
+<g >
+<title>wp_get_global_settings (569,113 microjoules, 2.69%)</title><rect x="690.1" y="325" width="31.7" height="15.0" fill="rgb(234,135,32)" rx="2" ry="2" />
+<text  x="693.07" y="335.5" >wp..</text>
+</g>
+<g >
+<title>get_rest_url (75,224 microjoules, 0.36%)</title><rect x="840.2" y="357" width="4.2" height="15.0" fill="rgb(247,197,47)" rx="2" ry="2" />
+<text  x="843.21" y="367.5" ></text>
+</g>
+<g >
+<title>WP_HTML_Tag_Processor::next_tag (86,564 microjoules, 0.41%)</title><rect x="773.7" y="325" width="4.9" height="15.0" fill="rgb(219,66,15)" rx="2" ry="2" />
+<text  x="776.72" y="335.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON_Resolver::get_merged_data (838,126 microjoules, 3.96%)</title><rect x="326.3" y="245" width="46.8" height="15.0" fill="rgb(251,214,51)" rx="2" ry="2" />
+<text  x="329.34" y="255.5" >WP_T..</text>
+</g>
+<g >
+<title>WP_Block_Parser::parse (51,730 microjoules, 0.24%)</title><rect x="281.3" y="341" width="2.9" height="15.0" fill="rgb(242,173,41)" rx="2" ry="2" />
+<text  x="284.30" y="351.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::__construct (52,153 microjoules, 0.25%)</title><rect x="587.6" y="261" width="2.9" height="15.0" fill="rgb(238,152,36)" rx="2" ry="2" />
+<text  x="590.56" y="271.5" ></text>
+</g>
+<g >
+<title>apply_filters (54,857 microjoules, 0.26%)</title><rect x="828.2" y="421" width="3.0" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="831.17" y="431.5" ></text>
+</g>
+<g >
+<title>wp_style_engine_get_styles (52,153 microjoules, 0.25%)</title><rect x="380.0" y="149" width="2.9" height="15.0" fill="rgb(238,155,37)" rx="2" ry="2" />
+<text  x="382.96" y="159.5" ></text>
+</g>
+<g >
+<title>wp_get_block_css_selector (76,972 microjoules, 0.36%)</title><rect x="1027.0" y="373" width="4.2" height="15.0" fill="rgb(207,12,3)" rx="2" ry="2" />
+<text  x="1029.95" y="383.5" ></text>
+</g>
+<g >
+<title>translate_settings_using_i18n_schema (76,055 microjoules, 0.36%)</title><rect x="715.1" y="197" width="4.2" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="718.08" y="207.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::merge (115,493 microjoules, 0.55%)</title><rect x="725.7" y="293" width="6.5" height="15.0" fill="rgb(245,185,44)" rx="2" ry="2" />
+<text  x="728.73" y="303.5" ></text>
+</g>
+<g >
+<title>render_block_core_navigation (488,259 microjoules, 2.31%)</title><rect x="735.7" y="373" width="27.2" height="15.0" fill="rgb(239,157,37)" rx="2" ry="2" />
+<text  x="738.66" y="383.5" >r..</text>
+</g>
+<g >
+<title>render_block_core_pattern (70,900 microjoules, 0.34%)</title><rect x="303.2" y="277" width="4.0" height="15.0" fill="rgb(215,50,11)" rx="2" ry="2" />
+<text  x="306.21" y="287.5" ></text>
+</g>
+<g >
+<title>render_block_core_template_part (3,936,017 microjoules, 18.61%)</title><rect x="620.6" y="485" width="219.6" height="15.0" fill="rgb(209,18,4)" rx="2" ry="2" />
+<text  x="623.63" y="495.5" >render_block_core_template_part</text>
+</g>
+<g >
+<title>array_merge (42,019 microjoules, 0.20%)</title><rect x="505.5" y="229" width="2.3" height="15.0" fill="rgb(231,121,28)" rx="2" ry="2" />
+<text  x="508.50" y="239.5" ></text>
+</g>
+<g >
+<title>wp_register_alignment_support (31,925 microjoules, 0.15%)</title><rect x="68.2" y="453" width="1.8" height="15.0" fill="rgb(223,83,19)" rx="2" ry="2" />
+<text  x="71.18" y="463.5" ></text>
+</g>
+<g >
+<title>WP_Hook::apply_filters (68,888 microjoules, 0.33%)</title><rect x="788.2" y="405" width="3.9" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="791.21" y="415.5" ></text>
+</g>
+<g >
+<title>wp_get_layout_style (63,174 microjoules, 0.30%)</title><rect x="559.9" y="277" width="3.5" height="15.0" fill="rgb(210,27,6)" rx="2" ry="2" />
+<text  x="562.90" y="287.5" ></text>
+</g>
+<g >
+<title>WP_Navigation_Block_Renderer::render (488,259 microjoules, 2.31%)</title><rect x="735.7" y="357" width="27.2" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="738.66" y="367.5" >W..</text>
+</g>
+<g >
+<title>WP_Block::render (303,108 microjoules, 1.43%)</title><rect x="800.4" y="325" width="16.9" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="803.39" y="335.5" ></text>
+</g>
+<g >
+<title>wp_prime_option_caches (414,844 microjoules, 1.96%)</title><rect x="70.0" y="389" width="23.1" height="15.0" fill="rgb(216,54,12)" rx="2" ry="2" />
+<text  x="72.96" y="399.5" >w..</text>
+</g>
+<g >
+<title>wpdb::_do_query (316,914 microjoules, 1.50%)</title><rect x="420.4" y="181" width="17.7" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="423.41" y="191.5" ></text>
+</g>
+<g >
+<title>get_post_type (58,766 microjoules, 0.28%)</title><rect x="1064.1" y="469" width="3.3" height="15.0" fill="rgb(229,111,26)" rx="2" ry="2" />
+<text  x="1067.15" y="479.5" ></text>
+</g>
+<g >
+<title>mysqli_query (153,863 microjoules, 0.73%)</title><rect x="1106.3" y="453" width="8.5" height="15.0" fill="rgb(208,18,4)" rx="2" ry="2" />
+<text  x="1109.26" y="463.5" ></text>
+</g>
+<g >
+<title>apply_filters (282,374 microjoules, 1.34%)</title><rect x="604.9" y="485" width="15.7" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="607.88" y="495.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::compute_spacing_sizes (89,119 microjoules, 0.42%)</title><rect x="472.1" y="229" width="4.9" height="15.0" fill="rgb(245,186,44)" rx="2" ry="2" />
+<text  x="475.07" y="239.5" ></text>
+</g>
+<g >
+<title>wpdb::get_col (114,841 microjoules, 0.54%)</title><rect x="386.1" y="149" width="6.5" height="15.0" fill="rgb(207,12,3)" rx="2" ry="2" />
+<text  x="389.15" y="159.5" ></text>
+</g>
+<g >
+<title>&lt;main&gt; (18,854,180 microjoules, 89.14%)</title><rect x="10.0" y="581" width="1051.8" height="15.0" fill="rgb(205,3,0)" rx="2" ry="2" />
+<text  x="13.00" y="591.5" >&lt;main&gt;</text>
+</g>
+<g >
+<title>mysqli_query (48,557 microjoules, 0.23%)</title><rect x="964.4" y="261" width="2.7" height="15.0" fill="rgb(208,18,4)" rx="2" ry="2" />
+<text  x="967.37" y="271.5" ></text>
+</g>
+<g >
+<title>WP_Tax_Query::transform_query (54,526 microjoules, 0.26%)</title><rect x="1148.1" y="581" width="3.1" height="15.0" fill="rgb(211,30,7)" rx="2" ry="2" />
+<text  x="1151.11" y="591.5" ></text>
+</g>
+<g >
+<title>wp_render_block_style_variation_class_name (64,412 microjoules, 0.30%)</title><rect x="784.6" y="341" width="3.6" height="15.0" fill="rgb(223,85,20)" rx="2" ry="2" />
+<text  x="787.62" y="351.5" ></text>
+</g>
+<g >
+<title>register_block_core_post_time_to_read (62,603 microjoules, 0.30%)</title><rect x="119.0" y="485" width="3.5" height="15.0" fill="rgb(248,202,48)" rx="2" ry="2" />
+<text  x="121.99" y="495.5" ></text>
+</g>
+<g >
+<title>array_merge (50,626 microjoules, 0.24%)</title><rect x="361.5" y="213" width="2.8" height="15.0" fill="rgb(231,121,28)" rx="2" ry="2" />
+<text  x="364.47" y="223.5" ></text>
+</g>
+<g >
+<title>WP_HTML_Decoder::decode_attribute (86,564 microjoules, 0.41%)</title><rect x="773.7" y="309" width="4.9" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="776.72" y="319.5" ></text>
+</g>
+<g >
+<title>_wp_array_set (208,051 microjoules, 0.98%)</title><rect x="349.9" y="213" width="11.6" height="15.0" fill="rgb(227,105,25)" rx="2" ry="2" />
+<text  x="352.86" y="223.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::__construct (54,526 microjoules, 0.26%)</title><rect x="651.0" y="293" width="3.0" height="15.0" fill="rgb(238,152,36)" rx="2" ry="2" />
+<text  x="653.99" y="303.5" ></text>
+</g>
+<g >
+<title>apply_filters (108,806 microjoules, 0.51%)</title><rect x="400.2" y="245" width="6.1" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="403.24" y="255.5" ></text>
+</g>
+<g >
+<title>wpdb::query (86,783 microjoules, 0.41%)</title><rect x="991.2" y="421" width="4.9" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="994.25" y="431.5" ></text>
+</g>
+<g >
+<title>WP_Block::render (70,900 microjoules, 0.34%)</title><rect x="303.2" y="229" width="4.0" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="306.21" y="239.5" ></text>
+</g>
+<g >
+<title>WP_Theme::get_pattern_cache (414,844 microjoules, 1.96%)</title><rect x="70.0" y="453" width="23.1" height="15.0" fill="rgb(225,94,22)" rx="2" ry="2" />
+<text  x="72.96" y="463.5" >W..</text>
+</g>
+<g >
+<title>WP_Dependencies::add (151,662 microjoules, 0.72%)</title><rect x="143.5" y="453" width="8.4" height="15.0" fill="rgb(252,219,52)" rx="2" ry="2" />
+<text  x="146.46" y="463.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::get_block_selectors (149,771 microjoules, 0.71%)</title><rect x="1015.9" y="373" width="8.3" height="15.0" fill="rgb(252,217,52)" rx="2" ry="2" />
+<text  x="1018.87" y="383.5" ></text>
+</g>
+<g >
+<title>wpdb::_do_query (115,503 microjoules, 0.55%)</title><rect x="683.6" y="197" width="6.5" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="686.62" y="207.5" ></text>
+</g>
+<g >
+<title>mysqli_query (86,783 microjoules, 0.41%)</title><rect x="991.2" y="389" width="4.9" height="15.0" fill="rgb(208,18,4)" rx="2" ry="2" />
+<text  x="994.25" y="399.5" ></text>
+</g>
+<g >
+<title>all (21,151,602 microjoules, 100%)</title><rect x="10.0" y="629" width="1180.0" height="15.0" fill="rgb(213,39,9)" rx="2" ry="2" />
+<text  x="13.00" y="639.5" ></text>
+</g>
+<g >
+<title>get_option (67,299 microjoules, 0.32%)</title><rect x="765.8" y="261" width="3.8" height="15.0" fill="rgb(236,146,35)" rx="2" ry="2" />
+<text  x="768.81" y="271.5" ></text>
+</g>
+<g >
+<title>apply_filters (54,526 microjoules, 0.26%)</title><rect x="863.2" y="421" width="3.0" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="866.17" y="431.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON_Resolver::get_theme_data (68,311 microjoules, 0.32%)</title><rect x="556.1" y="261" width="3.8" height="15.0" fill="rgb(228,106,25)" rx="2" ry="2" />
+<text  x="559.09" y="271.5" ></text>
+</g>
+<g >
+<title>WP_Hook::apply_filters (187,816 microjoules, 0.89%)</title><rect x="840.2" y="405" width="10.5" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="843.21" y="415.5" ></text>
+</g>
+<g >
+<title>WP_Styles::__construct (47,795 microjoules, 0.23%)</title><rect x="132.0" y="453" width="2.7" height="15.0" fill="rgb(243,177,42)" rx="2" ry="2" />
+<text  x="135.00" y="463.5" ></text>
+</g>
+<g >
+<title>WP_Block::render (5,908,129 microjoules, 27.93%)</title><rect x="271.9" y="421" width="329.6" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="274.94" y="431.5" >WP_Block::render</text>
+</g>
+<g >
+<title>WP_Theme_JSON::get_valid_block_style_variations (54,778 microjoules, 0.26%)</title><rect x="667.4" y="245" width="3.1" height="15.0" fill="rgb(242,172,41)" rx="2" ry="2" />
+<text  x="670.39" y="255.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON_Resolver::get_core_data (280,979 microjoules, 1.33%)</title><rect x="703.6" y="293" width="15.7" height="15.0" fill="rgb(212,36,8)" rx="2" ry="2" />
+<text  x="706.64" y="303.5" ></text>
+</g>
+<g >
+<title>wp_register_font_collection (80,747 microjoules, 0.38%)</title><rect x="96.0" y="469" width="4.5" height="15.0" fill="rgb(231,122,29)" rx="2" ry="2" />
+<text  x="98.99" y="479.5" ></text>
+</g>
+<g >
+<title>WP_Hook::apply_filters (80,747 microjoules, 0.38%)</title><rect x="51.2" y="469" width="4.5" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="54.24" y="479.5" ></text>
+</g>
+<g >
+<title>load_default_textdomain (158,007 microjoules, 0.75%)</title><rect x="198.3" y="533" width="8.8" height="15.0" fill="rgb(253,221,52)" rx="2" ry="2" />
+<text  x="201.32" y="543.5" ></text>
+</g>
+<g >
+<title>_wp_array_get (130,833 microjoules, 0.62%)</title><rect x="342.6" y="213" width="7.3" height="15.0" fill="rgb(205,1,0)" rx="2" ry="2" />
+<text  x="345.57" y="223.5" ></text>
+</g>
+<g >
+<title>wp_print_script_tag (44,752 microjoules, 0.21%)</title><rect x="860.7" y="453" width="2.5" height="15.0" fill="rgb(220,72,17)" rx="2" ry="2" />
+<text  x="863.68" y="463.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::__construct (67,299 microjoules, 0.32%)</title><rect x="690.1" y="245" width="3.7" height="15.0" fill="rgb(238,152,36)" rx="2" ry="2" />
+<text  x="693.07" y="255.5" ></text>
+</g>
+<g >
+<title>WP_Block_Patterns_Registry::get_registered (58,766 microjoules, 0.28%)</title><rect x="792.1" y="405" width="3.2" height="15.0" fill="rgb(209,18,4)" rx="2" ry="2" />
+<text  x="795.06" y="415.5" ></text>
+</g>
+<g >
+<title>WP_Hook::apply_filters (378,009 microjoules, 1.79%)</title><rect x="572.4" y="325" width="21.1" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="575.44" y="335.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::__construct (124,478 microjoules, 0.59%)</title><rect x="313.8" y="245" width="7.0" height="15.0" fill="rgb(238,152,36)" rx="2" ry="2" />
+<text  x="316.83" y="255.5" ></text>
+</g>
+<g >
+<title>WP_Navigation_Block_Renderer::get_markup_for_inner_block (41,545 microjoules, 0.20%)</title><rect x="806.1" y="197" width="2.3" height="15.0" fill="rgb(248,202,48)" rx="2" ry="2" />
+<text  x="809.08" y="207.5" ></text>
+</g>
+<g >
+<title>&lt;main&gt; (4,466,771 microjoules, 21.12%)</title><rect x="10.0" y="549" width="249.2" height="15.0" fill="rgb(205,3,0)" rx="2" ry="2" />
+<text  x="13.00" y="559.5" >&lt;main&gt;</text>
+</g>
+<g >
+<title>apply_filters (252,798 microjoules, 1.20%)</title><rect x="406.3" y="261" width="14.1" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="409.31" y="271.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::__construct (100,237 microjoules, 0.47%)</title><rect x="326.3" y="229" width="5.6" height="15.0" fill="rgb(238,152,36)" rx="2" ry="2" />
+<text  x="329.34" y="239.5" ></text>
+</g>
+<g >
+<title>render_block (10,503,038 microjoules, 49.66%)</title><rect x="264.7" y="517" width="586.0" height="15.0" fill="rgb(237,147,35)" rx="2" ry="2" />
+<text  x="267.75" y="527.5" >render_block</text>
+</g>
+<g >
+<title>WP_Block::render (2,759,780 microjoules, 13.05%)</title><rect x="291.8" y="309" width="154.0" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="294.82" y="319.5" >WP_Block::render</text>
+</g>
+<g >
+<title>WP_Theme_JSON::__construct (287,524 microjoules, 1.36%)</title><rect x="516.6" y="229" width="16.0" height="15.0" fill="rgb(238,152,36)" rx="2" ry="2" />
+<text  x="519.58" y="239.5" ></text>
+</g>
+<g >
+<title>apply_filters (78,067 microjoules, 0.37%)</title><rect x="46.9" y="485" width="4.3" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="49.88" y="495.5" ></text>
+</g>
+<g >
+<title>WP_Query::__construct (189,166 microjoules, 0.89%)</title><rect x="735.7" y="261" width="10.5" height="15.0" fill="rgb(254,226,54)" rx="2" ry="2" />
+<text  x="738.66" y="271.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::merge (50,626 microjoules, 0.24%)</title><rect x="584.7" y="277" width="2.9" height="15.0" fill="rgb(245,185,44)" rx="2" ry="2" />
+<text  x="587.74" y="287.5" ></text>
+</g>
+<g >
+<title>json_encode (67,299 microjoules, 0.32%)</title><rect x="886.7" y="373" width="3.8" height="15.0" fill="rgb(226,99,23)" rx="2" ry="2" />
+<text  x="889.70" y="383.5" ></text>
+</g>
+<g >
+<title>WP_Block_Supports::apply_block_supports (52,153 microjoules, 0.25%)</title><rect x="380.0" y="181" width="2.9" height="15.0" fill="rgb(251,212,50)" rx="2" ry="2" />
+<text  x="382.96" y="191.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::get_block_nodes (44,752 microjoules, 0.21%)</title><rect x="364.3" y="181" width="2.5" height="15.0" fill="rgb(214,41,10)" rx="2" ry="2" />
+<text  x="367.30" y="191.5" ></text>
+</g>
+<g >
+<title>wp_default_packages (145,797 microjoules, 0.69%)</title><rect x="840.2" y="389" width="8.1" height="15.0" fill="rgb(238,156,37)" rx="2" ry="2" />
+<text  x="843.21" y="399.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::sanitize (311,239 microjoules, 1.47%)</title><rect x="1031.2" y="389" width="17.4" height="15.0" fill="rgb(229,113,27)" rx="2" ry="2" />
+<text  x="1034.25" y="399.5" ></text>
+</g>
+<g >
+<title>convert_smilies (68,311 microjoules, 0.32%)</title><rect x="631.8" y="469" width="3.8" height="15.0" fill="rgb(235,140,33)" rx="2" ry="2" />
+<text  x="634.81" y="479.5" ></text>
+</g>
+<g >
+<title>update_meta_cache (316,914 microjoules, 1.50%)</title><rect x="420.4" y="229" width="17.7" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="423.41" y="239.5" ></text>
+</g>
+<g >
+<title>array_intersect (72,748 microjoules, 0.34%)</title><rect x="316.7" y="213" width="4.1" height="15.0" fill="rgb(230,118,28)" rx="2" ry="2" />
+<text  x="319.72" y="223.5" ></text>
+</g>
+<g >
+<title>_inject_theme_attribute_in_template_part_block (101,911 microjoules, 0.48%)</title><rect x="996.1" y="437" width="5.7" height="15.0" fill="rgb(233,129,30)" rx="2" ry="2" />
+<text  x="999.09" y="447.5" ></text>
+</g>
+<g >
+<title>array_replace_recursive (44,752 microjoules, 0.21%)</title><rect x="364.3" y="213" width="2.5" height="15.0" fill="rgb(243,176,42)" rx="2" ry="2" />
+<text  x="367.30" y="223.5" ></text>
+</g>
+<g >
+<title>get_block_templates (475,443 microjoules, 2.25%)</title><rect x="958.7" y="501" width="26.5" height="15.0" fill="rgb(242,170,40)" rx="2" ry="2" />
+<text  x="961.66" y="511.5" >g..</text>
+</g>
+<g >
+<title>wp_json_file_decode (162,448 microjoules, 0.77%)</title><rect x="1052.8" y="405" width="9.0" height="15.0" fill="rgb(234,134,32)" rx="2" ry="2" />
+<text  x="1055.77" y="415.5" ></text>
+</g>
+<g >
+<title>file_get_contents (47,795 microjoules, 0.23%)</title><rect x="132.0" y="357" width="2.7" height="15.0" fill="rgb(209,22,5)" rx="2" ry="2" />
+<text  x="135.00" y="367.5" ></text>
+</g>
+<g >
+<title>wpdb::_do_query (76,972 microjoules, 0.36%)</title><rect x="971.3" y="405" width="4.3" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="974.32" y="415.5" ></text>
+</g>
+<g >
+<title>wpdb::get_results (58,766 microjoules, 0.28%)</title><rect x="1064.1" y="453" width="3.3" height="15.0" fill="rgb(234,136,32)" rx="2" ry="2" />
+<text  x="1067.15" y="463.5" ></text>
+</g>
+<g >
+<title>md5 (50,895 microjoules, 0.24%)</title><rect x="1103.4" y="485" width="2.9" height="15.0" fill="rgb(221,73,17)" rx="2" ry="2" />
+<text  x="1106.42" y="495.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON_Schema::migrate (74,517 microjoules, 0.35%)</title><rect x="1048.6" y="389" width="4.2" height="15.0" fill="rgb(249,202,48)" rx="2" ry="2" />
+<text  x="1051.61" y="399.5" ></text>
+</g>
+<g >
+<title>apply_block_hooks_to_content (95,382 microjoules, 0.45%)</title><rect x="834.9" y="437" width="5.3" height="15.0" fill="rgb(242,170,40)" rx="2" ry="2" />
+<text  x="837.89" y="447.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::remove_keys_not_in_schema (95,382 microjoules, 0.45%)</title><rect x="1043.3" y="341" width="5.3" height="15.0" fill="rgb(205,0,0)" rx="2" ry="2" />
+<text  x="1046.29" y="351.5" ></text>
+</g>
+<g >
+<title>WP_Dependencies::get_data (50,626 microjoules, 0.24%)</title><rect x="929.3" y="469" width="2.8" height="15.0" fill="rgb(241,169,40)" rx="2" ry="2" />
+<text  x="932.26" y="479.5" ></text>
+</g>
+<g >
+<title>get_block_templates (1,374,000 microjoules, 6.50%)</title><rect x="985.2" y="501" width="76.6" height="15.0" fill="rgb(242,170,40)" rx="2" ry="2" />
+<text  x="988.18" y="511.5" >get_bloc..</text>
+</g>
+<g >
+<title>render_block_core_pattern (6,037,091 microjoules, 28.54%)</title><rect x="264.7" y="469" width="336.8" height="15.0" fill="rgb(215,50,11)" rx="2" ry="2" />
+<text  x="267.75" y="479.5" >render_block_core_pattern</text>
+</g>
+<g >
+<title>wp_not_installed (229,805 microjoules, 1.09%)</title><rect x="242.4" y="533" width="12.9" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="245.43" y="543.5" ></text>
+</g>
+<g >
+<title>wpdb::set_charset (79,720 microjoules, 0.38%)</title><rect x="230.3" y="485" width="4.4" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="233.26" y="495.5" ></text>
+</g>
+<g >
+<title>WP_Hook::apply_filters (48,557 microjoules, 0.23%)</title><rect x="598.8" y="389" width="2.7" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="601.84" y="399.5" ></text>
+</g>
+<g >
+<title>wpdb::get_results (48,557 microjoules, 0.23%)</title><rect x="964.4" y="309" width="2.7" height="15.0" fill="rgb(234,136,32)" rx="2" ry="2" />
+<text  x="967.37" y="319.5" ></text>
+</g>
+<g >
+<title>update_post_author_caches (379,517 microjoules, 1.79%)</title><rect x="420.4" y="261" width="21.2" height="15.0" fill="rgb(206,5,1)" rx="2" ry="2" />
+<text  x="423.41" y="271.5" ></text>
+</g>
+<g >
+<title>array_map (58,766 microjoules, 0.28%)</title><rect x="1064.1" y="485" width="3.3" height="15.0" fill="rgb(237,151,36)" rx="2" ry="2" />
+<text  x="1067.15" y="495.5" ></text>
+</g>
+<g >
+<title>mysqli_query (67,299 microjoules, 0.32%)</title><rect x="765.8" y="197" width="3.8" height="15.0" fill="rgb(208,18,4)" rx="2" ry="2" />
+<text  x="768.81" y="207.5" ></text>
+</g>
+<g >
+<title>register_block_type_from_metadata (72,748 microjoules, 0.34%)</title><rect x="114.9" y="469" width="4.1" height="15.0" fill="rgb(212,32,7)" rx="2" ry="2" />
+<text  x="117.93" y="479.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::sanitize (72,748 microjoules, 0.34%)</title><rect x="316.7" y="229" width="4.1" height="15.0" fill="rgb(229,113,27)" rx="2" ry="2" />
+<text  x="319.72" y="239.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::sanitize (113,498 microjoules, 0.54%)</title><rect x="526.3" y="213" width="6.3" height="15.0" fill="rgb(229,113,27)" rx="2" ry="2" />
+<text  x="529.29" y="223.5" ></text>
+</g>
+<g >
+<title>WP_Block_Parser::parse (41,545 microjoules, 0.20%)</title><rect x="817.3" y="373" width="2.3" height="15.0" fill="rgb(242,173,41)" rx="2" ry="2" />
+<text  x="820.30" y="383.5" ></text>
+</g>
+<g >
+<title>get_block_file_template (161,048 microjoules, 0.76%)</title><rect x="831.2" y="469" width="9.0" height="15.0" fill="rgb(233,133,31)" rx="2" ry="2" />
+<text  x="834.23" y="479.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::sanitize (103,335 microjoules, 0.49%)</title><rect x="697.9" y="245" width="5.7" height="15.0" fill="rgb(229,113,27)" rx="2" ry="2" />
+<text  x="700.88" y="255.5" ></text>
+</g>
+<g >
+<title>apply_filters (67,299 microjoules, 0.32%)</title><rect x="765.8" y="309" width="3.8" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="768.81" y="319.5" ></text>
+</g>
+<g >
+<title>WP_Query::get_posts (86,783 microjoules, 0.41%)</title><rect x="991.2" y="453" width="4.9" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="994.25" y="463.5" ></text>
+</g>
+<g >
+<title>preg_replace (70,089 microjoules, 0.33%)</title><rect x="925.3" y="277" width="4.0" height="15.0" fill="rgb(243,176,42)" rx="2" ry="2" />
+<text  x="928.35" y="287.5" ></text>
+</g>
+<g >
+<title>mysqli_query (244,236 microjoules, 1.15%)</title><rect x="749.3" y="197" width="13.6" height="15.0" fill="rgb(208,18,4)" rx="2" ry="2" />
+<text  x="752.28" y="207.5" ></text>
+</g>
+<g >
+<title>get_block_wrapper_attributes (52,153 microjoules, 0.25%)</title><rect x="380.0" y="197" width="2.9" height="15.0" fill="rgb(235,140,33)" rx="2" ry="2" />
+<text  x="382.96" y="207.5" ></text>
+</g>
+<g >
+<title>get_option (89,119 microjoules, 0.42%)</title><rect x="1118.4" y="581" width="5.0" height="15.0" fill="rgb(236,146,35)" rx="2" ry="2" />
+<text  x="1121.40" y="591.5" ></text>
+</g>
+<g >
+<title>json_decode (89,119 microjoules, 0.42%)</title><rect x="659.1" y="245" width="5.0" height="15.0" fill="rgb(241,166,39)" rx="2" ry="2" />
+<text  x="662.09" y="255.5" ></text>
+</g>
+<g >
+<title>WP_HTML_Tag_Processor::get_attribute_names_with_prefix (74,517 microjoules, 0.35%)</title><rect x="769.6" y="325" width="4.1" height="15.0" fill="rgb(229,114,27)" rx="2" ry="2" />
+<text  x="772.56" y="335.5" ></text>
+</g>
+<g >
+<title>WP_Styles::do_item (312,940 microjoules, 1.48%)</title><rect x="936.1" y="453" width="17.5" height="15.0" fill="rgb(250,209,50)" rx="2" ry="2" />
+<text  x="939.14" y="463.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::merge (133,456 microjoules, 0.63%)</title><rect x="879.3" y="357" width="7.4" height="15.0" fill="rgb(245,185,44)" rx="2" ry="2" />
+<text  x="882.25" y="367.5" ></text>
+</g>
+<g >
+<title>WP_Script_Modules::print_script_module_translations (54,526 microjoules, 0.26%)</title><rect x="863.2" y="485" width="3.0" height="15.0" fill="rgb(214,45,10)" rx="2" ry="2" />
+<text  x="866.17" y="495.5" ></text>
+</g>
+<g >
+<title>compact (54,857 microjoules, 0.26%)</title><rect x="676.8" y="229" width="3.0" height="15.0" fill="rgb(213,40,9)" rx="2" ry="2" />
+<text  x="679.75" y="239.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::__construct (50,626 microjoules, 0.24%)</title><rect x="581.9" y="277" width="2.8" height="15.0" fill="rgb(238,152,36)" rx="2" ry="2" />
+<text  x="584.92" y="287.5" ></text>
+</g>
+<g >
+<title>WP_Hook::apply_filters (59,740 microjoules, 0.28%)</title><rect x="601.5" y="485" width="3.4" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="604.54" y="495.5" ></text>
+</g>
+<g >
+<title>wp_render_layout_support_flag (54,778 microjoules, 0.26%)</title><rect x="590.5" y="309" width="3.0" height="15.0" fill="rgb(207,9,2)" rx="2" ry="2" />
+<text  x="593.47" y="319.5" ></text>
+</g>
+<g >
+<title>render_block (137,788 microjoules, 0.65%)</title><rect x="392.6" y="181" width="7.6" height="15.0" fill="rgb(237,147,35)" rx="2" ry="2" />
+<text  x="395.55" y="191.5" ></text>
+</g>
+<g >
+<title>WP_Query::query (189,166 microjoules, 0.89%)</title><rect x="735.7" y="245" width="10.5" height="15.0" fill="rgb(215,49,11)" rx="2" ry="2" />
+<text  x="738.66" y="255.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::merge (59,740 microjoules, 0.28%)</title><rect x="664.1" y="277" width="3.3" height="15.0" fill="rgb(245,185,44)" rx="2" ry="2" />
+<text  x="667.06" y="287.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::remove_keys_not_in_schema (95,382 microjoules, 0.45%)</title><rect x="1043.3" y="309" width="5.3" height="15.0" fill="rgb(205,0,0)" rx="2" ry="2" />
+<text  x="1046.29" y="319.5" ></text>
+</g>
+<g >
+<title>&lt;main&gt; (19,868,089 microjoules, 93.93%)</title><rect x="10.0" y="613" width="1108.4" height="15.0" fill="rgb(205,3,0)" rx="2" ry="2" />
+<text  x="13.00" y="623.5" >&lt;main&gt;</text>
+</g>
+<g >
+<title>get_home_template (1,374,000 microjoules, 6.50%)</title><rect x="985.2" y="565" width="76.6" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="988.18" y="575.5" >get_home..</text>
+</g>
+<g >
+<title>WP_Term_Query::query (48,557 microjoules, 0.23%)</title><rect x="964.4" y="341" width="2.7" height="15.0" fill="rgb(216,52,12)" rx="2" ry="2" />
+<text  x="967.37" y="351.5" ></text>
+</g>
+<g >
+<title>translate_settings_using_i18n_schema (76,055 microjoules, 0.36%)</title><rect x="715.1" y="181" width="4.2" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="718.08" y="191.5" ></text>
+</g>
+<g >
+<title>wp_render_block_style_variation_support_styles (1,130,540 microjoules, 5.34%)</title><rect x="313.8" y="261" width="63.1" height="15.0" fill="rgb(251,213,51)" rx="2" ry="2" />
+<text  x="316.83" y="271.5" >wp_ren..</text>
+</g>
+<g >
+<title>WP_Query::the_post (379,517 microjoules, 1.79%)</title><rect x="420.4" y="277" width="21.2" height="15.0" fill="rgb(252,216,51)" rx="2" ry="2" />
+<text  x="423.41" y="287.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON_Data::__construct (153,194 microjoules, 0.72%)</title><rect x="706.5" y="277" width="8.6" height="15.0" fill="rgb(232,127,30)" rx="2" ry="2" />
+<text  x="709.53" y="287.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::get_styles_for_block (51,830 microjoules, 0.25%)</title><rect x="320.8" y="213" width="2.9" height="15.0" fill="rgb(240,161,38)" rx="2" ry="2" />
+<text  x="323.78" y="223.5" ></text>
+</g>
+<g >
+<title>WP_Query::generate_cache_key (58,766 microjoules, 0.28%)</title><rect x="382.9" y="149" width="3.2" height="15.0" fill="rgb(243,178,42)" rx="2" ry="2" />
+<text  x="385.87" y="159.5" ></text>
+</g>
+<g >
+<title>get_theme_mod (67,299 microjoules, 0.32%)</title><rect x="765.8" y="325" width="3.8" height="15.0" fill="rgb(221,76,18)" rx="2" ry="2" />
+<text  x="768.81" y="335.5" ></text>
+</g>
+<g >
+<title>WP_HTML_Tag_Processor::set_attribute (44,752 microjoules, 0.21%)</title><rect x="860.7" y="421" width="2.5" height="15.0" fill="rgb(223,83,19)" rx="2" ry="2" />
+<text  x="863.68" y="431.5" ></text>
+</g>
+<g >
+<title>wpdb::query (67,299 microjoules, 0.32%)</title><rect x="765.8" y="229" width="3.8" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="768.81" y="239.5" ></text>
+</g>
+<g >
+<title>wp_normalize_path (175,511 microjoules, 0.83%)</title><rect x="178.0" y="453" width="9.8" height="15.0" fill="rgb(211,29,6)" rx="2" ry="2" />
+<text  x="180.97" y="463.5" ></text>
+</g>
+<g >
+<title>WP_Interactivity_API::_process_directives (269,887 microjoules, 1.28%)</title><rect x="769.6" y="341" width="15.0" height="15.0" fill="rgb(244,179,42)" rx="2" ry="2" />
+<text  x="772.56" y="351.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::remove_keys_not_in_schema (166,282 microjoules, 0.79%)</title><rect x="1039.3" y="373" width="9.3" height="15.0" fill="rgb(205,0,0)" rx="2" ry="2" />
+<text  x="1042.34" y="383.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::merge (72,748 microjoules, 0.34%)</title><rect x="693.8" y="261" width="4.1" height="15.0" fill="rgb(245,185,44)" rx="2" ry="2" />
+<text  x="696.82" y="271.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON_Resolver::get_merged_data (153,405 microjoules, 0.73%)</title><rect x="581.9" y="293" width="8.6" height="15.0" fill="rgb(251,214,51)" rx="2" ry="2" />
+<text  x="584.92" y="303.5" ></text>
+</g>
+<g >
+<title>implode (54,526 microjoules, 0.26%)</title><rect x="1148.1" y="613" width="3.1" height="15.0" fill="rgb(244,181,43)" rx="2" ry="2" />
+<text  x="1151.11" y="623.5" ></text>
+</g>
+<g >
+<title>WP_Block::render (6,037,091 microjoules, 28.54%)</title><rect x="264.7" y="485" width="336.8" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="267.75" y="495.5" >WP_Block::render</text>
+</g>
+<g >
+<title>WP_Query::query (65,666 microjoules, 0.31%)</title><rect x="831.2" y="453" width="3.7" height="15.0" fill="rgb(215,49,11)" rx="2" ry="2" />
+<text  x="834.23" y="463.5" ></text>
+</g>
+<g >
+<title>WP_Query::get_posts (173,607 microjoules, 0.82%)</title><rect x="382.9" y="165" width="9.7" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="385.87" y="175.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::get_block_style_variation_selector (48,987 microjoules, 0.23%)</title><rect x="1024.2" y="373" width="2.8" height="15.0" fill="rgb(208,15,3)" rx="2" ry="2" />
+<text  x="1027.22" y="383.5" ></text>
+</g>
+<g >
+<title>_build_block_template_result_from_file (101,911 microjoules, 0.48%)</title><rect x="996.1" y="485" width="5.7" height="15.0" fill="rgb(248,198,47)" rx="2" ry="2" />
+<text  x="999.09" y="495.5" ></text>
+</g>
+<g >
+<title>array_replace_recursive (29,574 microjoules, 0.14%)</title><rect x="730.5" y="277" width="1.7" height="15.0" fill="rgb(243,176,42)" rx="2" ry="2" />
+<text  x="733.52" y="287.5" ></text>
+</g>
+<g >
+<title>get_option (65,666 microjoules, 0.31%)</title><rect x="831.2" y="421" width="3.7" height="15.0" fill="rgb(236,146,35)" rx="2" ry="2" />
+<text  x="834.23" y="431.5" ></text>
+</g>
+<g >
+<title>render_block (70,900 microjoules, 0.34%)</title><rect x="303.2" y="245" width="4.0" height="15.0" fill="rgb(237,147,35)" rx="2" ry="2" />
+<text  x="306.21" y="255.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::merge (29,574 microjoules, 0.14%)</title><rect x="730.5" y="261" width="1.7" height="15.0" fill="rgb(245,185,44)" rx="2" ry="2" />
+<text  x="733.52" y="271.5" ></text>
+</g>
+<g >
+<title>wp_render_layout_support_flag (63,174 microjoules, 0.30%)</title><rect x="559.9" y="293" width="3.5" height="15.0" fill="rgb(207,9,2)" rx="2" ry="2" />
+<text  x="562.90" y="303.5" ></text>
+</g>
+<g >
+<title>WP_Block::render (303,108 microjoules, 1.43%)</title><rect x="800.4" y="373" width="16.9" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="803.39" y="383.5" ></text>
+</g>
+<g >
+<title>WP_Query::__construct (86,783 microjoules, 0.41%)</title><rect x="991.2" y="485" width="4.9" height="15.0" fill="rgb(254,226,54)" rx="2" ry="2" />
+<text  x="994.25" y="495.5" ></text>
+</g>
+<g >
+<title>do_action (99,278 microjoules, 0.47%)</title><rect x="860.7" y="533" width="5.5" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="863.68" y="543.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON_Resolver::get_merged_data (1,699,146 microjoules, 8.03%)</title><rect x="445.8" y="261" width="94.8" height="15.0" fill="rgb(251,214,51)" rx="2" ry="2" />
+<text  x="448.78" y="271.5" >WP_Theme_JS..</text>
+</g>
+<g >
+<title>WP_Hook::add_filter (65,666 microjoules, 0.31%)</title><rect x="40.9" y="453" width="3.6" height="15.0" fill="rgb(225,96,23)" rx="2" ry="2" />
+<text  x="43.88" y="463.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON_Resolver::translate (76,055 microjoules, 0.36%)</title><rect x="715.1" y="277" width="4.2" height="15.0" fill="rgb(209,21,5)" rx="2" ry="2" />
+<text  x="718.08" y="287.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::get_stylesheet (86,564 microjoules, 0.41%)</title><rect x="577.1" y="293" width="4.8" height="15.0" fill="rgb(232,125,30)" rx="2" ry="2" />
+<text  x="580.09" y="303.5" ></text>
+</g>
+<g >
+<title>apply_block_hooks_to_content (58,766 microjoules, 0.28%)</title><rect x="792.1" y="389" width="3.2" height="15.0" fill="rgb(242,170,40)" rx="2" ry="2" />
+<text  x="795.06" y="399.5" ></text>
+</g>
+<g >
+<title>get_block_wrapper_attributes (65,666 microjoules, 0.31%)</title><rect x="810.0" y="213" width="3.7" height="15.0" fill="rgb(235,140,33)" rx="2" ry="2" />
+<text  x="813.05" y="223.5" ></text>
+</g>
+<g >
+<title>add_filter (65,666 microjoules, 0.31%)</title><rect x="40.9" y="469" width="3.6" height="15.0" fill="rgb(208,14,3)" rx="2" ry="2" />
+<text  x="43.88" y="479.5" ></text>
+</g>
+<g >
+<title>render_block_core_pattern (647,269 microjoules, 3.06%)</title><rect x="792.1" y="421" width="36.1" height="15.0" fill="rgb(215,50,11)" rx="2" ry="2" />
+<text  x="795.06" y="431.5" >ren..</text>
+</g>
+<g >
+<title>wpdb::_do_query (200,431 microjoules, 0.95%)</title><rect x="620.6" y="389" width="11.2" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="623.63" y="399.5" ></text>
+</g>
+<g >
+<title>wpdb::_do_query (65,666 microjoules, 0.31%)</title><rect x="831.2" y="389" width="3.7" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="834.23" y="399.5" ></text>
+</g>
+<g >
+<title>apply_filters (378,009 microjoules, 1.79%)</title><rect x="572.4" y="341" width="21.1" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="575.44" y="351.5" ></text>
+</g>
+<g >
+<title>WP_Query::__construct (173,607 microjoules, 0.82%)</title><rect x="382.9" y="197" width="9.7" height="15.0" fill="rgb(254,226,54)" rx="2" ry="2" />
+<text  x="385.87" y="207.5" ></text>
+</g>
+<g >
+<title>get_post_type (78,067 microjoules, 0.37%)</title><rect x="1067.4" y="469" width="4.4" height="15.0" fill="rgb(229,111,26)" rx="2" ry="2" />
+<text  x="1070.43" y="479.5" ></text>
+</g>
+<g >
+<title>render_block_core_post_title (52,153 microjoules, 0.25%)</title><rect x="380.0" y="213" width="2.9" height="15.0" fill="rgb(240,163,39)" rx="2" ry="2" />
+<text  x="382.96" y="223.5" ></text>
+</g>
+<g >
+<title>WP_Term_Query::query (54,526 microjoules, 0.26%)</title><rect x="1148.1" y="565" width="3.1" height="15.0" fill="rgb(216,52,12)" rx="2" ry="2" />
+<text  x="1151.11" y="575.5" ></text>
+</g>
+<g >
+<title>WP_Block::render (5,557,249 microjoules, 26.27%)</title><rect x="287.0" y="357" width="310.1" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="290.03" y="367.5" >WP_Block::render</text>
+</g>
+<g >
+<title>WP_Embed::autoembed (231,479 microjoules, 1.09%)</title><rect x="607.7" y="453" width="12.9" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="610.72" y="463.5" ></text>
+</g>
+<g >
+<title>WP_Interactivity_API::parse_directive_name (108,806 microjoules, 0.51%)</title><rect x="778.6" y="325" width="6.0" height="15.0" fill="rgb(216,50,12)" rx="2" ry="2" />
+<text  x="781.55" y="335.5" ></text>
+</g>
+<g >
+<title>get_front_page_template (475,443 microjoules, 2.25%)</title><rect x="958.7" y="565" width="26.5" height="15.0" fill="rgb(209,20,5)" rx="2" ry="2" />
+<text  x="961.66" y="575.5" >g..</text>
+</g>
+<g >
+<title>WP_Hook::apply_filters (44,752 microjoules, 0.21%)</title><rect x="860.7" y="405" width="2.5" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="863.68" y="415.5" ></text>
+</g>
+<g >
+<title>wp_set_current_user (80,747 microjoules, 0.38%)</title><rect x="51.2" y="485" width="4.5" height="15.0" fill="rgb(217,57,13)" rx="2" ry="2" />
+<text  x="54.24" y="495.5" ></text>
+</g>
+<g >
+<title>preg_match (91,019 microjoules, 0.43%)</title><rect x="1164.6" y="613" width="5.0" height="15.0" fill="rgb(230,118,28)" rx="2" ry="2" />
+<text  x="1167.56" y="623.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::merge (91,019 microjoules, 0.43%)</title><rect x="511.5" y="213" width="5.1" height="15.0" fill="rgb(245,185,44)" rx="2" ry="2" />
+<text  x="514.51" y="223.5" ></text>
+</g>
+<g >
+<title>register_core_block_style_handles (999,544 microjoules, 4.73%)</title><rect x="132.0" y="485" width="55.8" height="15.0" fill="rgb(249,203,48)" rx="2" ry="2" />
+<text  x="135.00" y="495.5" >regis..</text>
+</g>
+<g >
+<title>WP_Styles::add_data (81,304 microjoules, 0.38%)</title><rect x="151.9" y="453" width="4.6" height="15.0" fill="rgb(230,118,28)" rx="2" ry="2" />
+<text  x="154.93" y="463.5" ></text>
+</g>
+<g >
+<title>RecursiveDirectoryIterator::__construct (90,656 microjoules, 0.43%)</title><rect x="980.1" y="453" width="5.1" height="15.0" fill="rgb(226,100,24)" rx="2" ry="2" />
+<text  x="983.12" y="463.5" ></text>
+</g>
+<g >
+<title>WP_HTML_Tag_Processor::apply_attributes_updates (54,778 microjoules, 0.26%)</title><rect x="950.5" y="421" width="3.1" height="15.0" fill="rgb(211,30,7)" rx="2" ry="2" />
+<text  x="953.54" y="431.5" ></text>
+</g>
+<g >
+<title>wpdb::get_results (201,913 microjoules, 0.95%)</title><rect x="1085.4" y="405" width="11.3" height="15.0" fill="rgb(234,136,32)" rx="2" ry="2" />
+<text  x="1088.42" y="415.5" ></text>
+</g>
+<g >
+<title>WP_Block::render (201,213 microjoules, 0.95%)</title><rect x="299.9" y="293" width="11.2" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="302.88" y="303.5" ></text>
+</g>
+<g >
+<title>WP_Block::render (238,696 microjoules, 1.13%)</title><rect x="800.4" y="277" width="13.3" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="803.39" y="287.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON_Resolver::get_merged_data (248,185 microjoules, 1.17%)</title><rect x="721.8" y="309" width="13.9" height="15.0" fill="rgb(251,214,51)" rx="2" ry="2" />
+<text  x="724.82" y="319.5" ></text>
+</g>
+<g >
+<title>translate_settings_using_i18n_schema (76,055 microjoules, 0.36%)</title><rect x="715.1" y="261" width="4.2" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="718.08" y="271.5" ></text>
+</g>
+<g >
+<title>wp_apply_typography_support (65,666 microjoules, 0.31%)</title><rect x="810.0" y="181" width="3.7" height="15.0" fill="rgb(251,215,51)" rx="2" ry="2" />
+<text  x="813.05" y="191.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::merge (119,442 microjoules, 0.56%)</title><rect x="872.6" y="373" width="6.7" height="15.0" fill="rgb(245,185,44)" rx="2" ry="2" />
+<text  x="875.59" y="383.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::merge (1,000,284 microjoules, 4.73%)</title><rect x="460.8" y="245" width="55.8" height="15.0" fill="rgb(245,185,44)" rx="2" ry="2" />
+<text  x="463.78" y="255.5" >WP_Th..</text>
+</g>
+<g >
+<title>WP_Hook::apply_filters (1,559,272 microjoules, 7.37%)</title><rect x="648.7" y="357" width="87.0" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="651.67" y="367.5" >WP_Hook::a..</text>
+</g>
+<g >
+<title>WP_Block_Supports::apply_block_supports (29,574 microjoules, 0.14%)</title><rect x="808.4" y="197" width="1.6" height="15.0" fill="rgb(251,212,50)" rx="2" ry="2" />
+<text  x="811.40" y="207.5" ></text>
+</g>
+<g >
+<title>mysqli_query (62,603 microjoules, 0.30%)</title><rect x="438.1" y="181" width="3.5" height="15.0" fill="rgb(208,18,4)" rx="2" ry="2" />
+<text  x="441.09" y="191.5" ></text>
+</g>
+<g >
+<title>wp_set_wpdb_vars (70,573 microjoules, 0.33%)</title><rect x="255.3" y="533" width="3.9" height="15.0" fill="rgb(246,188,45)" rx="2" ry="2" />
+<text  x="258.25" y="543.5" ></text>
+</g>
+<g >
+<title>next (85,919 microjoules, 0.41%)</title><rect x="1159.8" y="613" width="4.8" height="15.0" fill="rgb(225,96,23)" rx="2" ry="2" />
+<text  x="1162.76" y="623.5" ></text>
+</g>
+<g >
+<title>has_custom_logo (119,452 microjoules, 0.56%)</title><rect x="762.9" y="341" width="6.7" height="15.0" fill="rgb(238,156,37)" rx="2" ry="2" />
+<text  x="765.90" y="351.5" ></text>
+</g>
+<g >
+<title>_wp_get_current_user (158,814 microjoules, 0.75%)</title><rect x="46.9" y="501" width="8.8" height="15.0" fill="rgb(231,120,28)" rx="2" ry="2" />
+<text  x="49.88" y="511.5" ></text>
+</g>
+<g >
+<title>do_action (1,075,520 microjoules, 5.08%)</title><rect x="869.3" y="469" width="60.0" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="872.26" y="479.5" >do_act..</text>
+</g>
+<g >
+<title>mysqli_query (76,972 microjoules, 0.36%)</title><rect x="971.3" y="389" width="4.3" height="15.0" fill="rgb(208,18,4)" rx="2" ry="2" />
+<text  x="974.32" y="399.5" ></text>
+</g>
+<g >
+<title>wp_scripts (48,557 microjoules, 0.23%)</title><rect x="598.8" y="405" width="2.7" height="15.0" fill="rgb(244,182,43)" rx="2" ry="2" />
+<text  x="601.84" y="415.5" ></text>
+</g>
+<g >
+<title>WP_Hook::do_action (1,657,016 microjoules, 7.83%)</title><rect x="866.2" y="517" width="92.5" height="15.0" fill="rgb(233,129,30)" rx="2" ry="2" />
+<text  x="869.21" y="527.5" >WP_Hook::do..</text>
+</g>
+<g >
+<title>WP_Theme_JSON::get_stylesheet (99,625 microjoules, 0.47%)</title><rect x="320.8" y="245" width="5.5" height="15.0" fill="rgb(232,125,30)" rx="2" ry="2" />
+<text  x="323.78" y="255.5" ></text>
+</g>
+<g >
+<title>do_blocks (588,503 microjoules, 2.78%)</title><rect x="795.3" y="405" width="32.9" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="798.34" y="415.5" >do..</text>
+</g>
+<g >
+<title>translate (48,557 microjoules, 0.23%)</title><rect x="491.2" y="197" width="2.7" height="15.0" fill="rgb(221,76,18)" rx="2" ry="2" />
+<text  x="494.17" y="207.5" ></text>
+</g>
+<g >
+<title>apply_filters (64,412 microjoules, 0.30%)</title><rect x="813.7" y="277" width="3.6" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="816.71" y="287.5" ></text>
+</g>
+<g >
+<title>WP_Term_Query::query (446,294 microjoules, 2.11%)</title><rect x="1071.8" y="437" width="24.9" height="15.0" fill="rgb(216,52,12)" rx="2" ry="2" />
+<text  x="1074.78" y="447.5" >W..</text>
+</g>
+<g >
+<title>mysqli_query (78,067 microjoules, 0.37%)</title><rect x="1067.4" y="405" width="4.4" height="15.0" fill="rgb(208,18,4)" rx="2" ry="2" />
+<text  x="1070.43" y="415.5" ></text>
+</g>
+<g >
+<title>WP_Block::render (303,108 microjoules, 1.43%)</title><rect x="800.4" y="293" width="16.9" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="803.39" y="303.5" ></text>
+</g>
+<g >
+<title>mysqli_query (125,315 microjoules, 0.59%)</title><rect x="735.7" y="149" width="7.0" height="15.0" fill="rgb(208,18,4)" rx="2" ry="2" />
+<text  x="738.66" y="159.5" ></text>
+</g>
+<g >
+<title>WP_Script_Modules::print_enqueued_script_modules (44,752 microjoules, 0.21%)</title><rect x="860.7" y="485" width="2.5" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="863.68" y="495.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::__construct (68,311 microjoules, 0.32%)</title><rect x="556.1" y="245" width="3.8" height="15.0" fill="rgb(238,152,36)" rx="2" ry="2" />
+<text  x="559.09" y="255.5" ></text>
+</g>
+<g >
+<title>array_pop (63,174 microjoules, 0.30%)</title><rect x="593.5" y="341" width="3.6" height="15.0" fill="rgb(228,106,25)" rx="2" ry="2" />
+<text  x="596.53" y="351.5" ></text>
+</g>
+<g >
+<title>wp_render_layout_support_flag (64,412 microjoules, 0.30%)</title><rect x="813.7" y="245" width="3.6" height="15.0" fill="rgb(207,9,2)" rx="2" ry="2" />
+<text  x="816.71" y="255.5" ></text>
+</g>
+<g >
+<title>wpdb::get_col (153,863 microjoules, 0.73%)</title><rect x="1106.3" y="501" width="8.5" height="15.0" fill="rgb(207,12,3)" rx="2" ry="2" />
+<text  x="1109.26" y="511.5" ></text>
+</g>
+<g >
+<title>wpdb::query (65,666 microjoules, 0.31%)</title><rect x="831.2" y="405" width="3.7" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="834.23" y="415.5" ></text>
+</g>
+<g >
+<title>update_object_term_cache (524,361 microjoules, 2.48%)</title><rect x="1067.4" y="485" width="29.3" height="15.0" fill="rgb(220,70,16)" rx="2" ry="2" />
+<text  x="1070.43" y="495.5" >up..</text>
+</g>
+<g >
+<title>get_hooked_blocks (95,382 microjoules, 0.45%)</title><rect x="834.9" y="421" width="5.3" height="15.0" fill="rgb(252,216,51)" rx="2" ry="2" />
+<text  x="837.89" y="431.5" ></text>
+</g>
+<g >
+<title>render_block (5,640,069 microjoules, 26.66%)</title><rect x="284.2" y="373" width="314.6" height="15.0" fill="rgb(237,147,35)" rx="2" ry="2" />
+<text  x="287.19" y="383.5" >render_block</text>
+</g>
+<g >
+<title>WP_Block::render (303,108 microjoules, 1.43%)</title><rect x="800.4" y="341" width="16.9" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="803.39" y="351.5" ></text>
+</g>
+<g >
+<title>wpdb::query (201,913 microjoules, 0.95%)</title><rect x="1085.4" y="389" width="11.3" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="1088.42" y="399.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::merge (142,523 microjoules, 0.67%)</title><rect x="532.6" y="229" width="8.0" height="15.0" fill="rgb(245,185,44)" rx="2" ry="2" />
+<text  x="535.62" y="239.5" ></text>
+</g>
+<g >
+<title>wpdb::_do_query (158,007 microjoules, 0.75%)</title><rect x="198.3" y="437" width="8.8" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="201.32" y="447.5" ></text>
+</g>
+<g >
+<title>{closure} (951,749 microjoules, 4.50%)</title><rect x="134.7" y="469" width="53.1" height="15.0" fill="rgb(219,67,16)" rx="2" ry="2" />
+<text  x="137.66" y="479.5" >{clos..</text>
+</g>
+<g >
+<title>wp_get_block_css_selector (31,925 microjoules, 0.15%)</title><rect x="1014.1" y="357" width="1.8" height="15.0" fill="rgb(207,12,3)" rx="2" ry="2" />
+<text  x="1017.09" y="367.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::compute_theme_vars (51,730 microjoules, 0.24%)</title><rect x="905.5" y="357" width="2.9" height="15.0" fill="rgb(238,154,36)" rx="2" ry="2" />
+<text  x="908.49" y="367.5" ></text>
+</g>
+<g >
+<title>render_block_core_navigation_link (41,545 microjoules, 0.20%)</title><rect x="806.1" y="165" width="2.3" height="15.0" fill="rgb(247,196,47)" rx="2" ry="2" />
+<text  x="809.08" y="175.5" ></text>
+</g>
+<g >
+<title>translate_settings_using_i18n_schema (76,055 microjoules, 0.36%)</title><rect x="715.1" y="245" width="4.2" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="718.08" y="255.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON_Resolver::get_theme_data (112,939 microjoules, 0.53%)</title><rect x="366.8" y="229" width="6.3" height="15.0" fill="rgb(228,106,25)" rx="2" ry="2" />
+<text  x="369.79" y="239.5" ></text>
+</g>
+<g >
+<title>wpdb::query (76,972 microjoules, 0.36%)</title><rect x="971.3" y="421" width="4.3" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="974.32" y="431.5" ></text>
+</g>
+<g >
+<title>wpdb::_do_query (48,557 microjoules, 0.23%)</title><rect x="964.4" y="277" width="2.7" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="967.37" y="287.5" ></text>
+</g>
+<g >
+<title>render_block_core_pattern (5,792,273 microjoules, 27.38%)</title><rect x="275.7" y="405" width="323.1" height="15.0" fill="rgb(215,50,11)" rx="2" ry="2" />
+<text  x="278.70" y="415.5" >render_block_core_pattern</text>
+</g>
+<g >
+<title>wpdb::query (125,315 microjoules, 0.59%)</title><rect x="735.7" y="181" width="7.0" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="738.66" y="191.5" ></text>
+</g>
+<g >
+<title>WP_Block_Patterns_Registry::get_registered (81,304 microjoules, 0.38%)</title><rect x="279.7" y="389" width="4.5" height="15.0" fill="rgb(209,18,4)" rx="2" ry="2" />
+<text  x="282.65" y="399.5" ></text>
+</g>
+<g >
+<title>wp_interactivity_process_directives (269,887 microjoules, 1.28%)</title><rect x="769.6" y="373" width="15.0" height="15.0" fill="rgb(245,184,44)" rx="2" ry="2" />
+<text  x="772.56" y="383.5" ></text>
+</g>
+<g >
+<title>wpdb::query (89,119 microjoules, 0.42%)</title><rect x="1118.4" y="565" width="5.0" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="1121.40" y="575.5" ></text>
+</g>
+<g >
+<title>WP_Query::get_posts (200,431 microjoules, 0.95%)</title><rect x="620.6" y="437" width="11.2" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="623.63" y="447.5" ></text>
+</g>
+<g >
+<title>WP_Dependencies::do_items (312,940 microjoules, 1.48%)</title><rect x="936.1" y="469" width="17.5" height="15.0" fill="rgb(217,57,13)" rx="2" ry="2" />
+<text  x="939.14" y="479.5" ></text>
+</g>
+<g >
+<title>WP_Navigation_Block_Renderer::get_inner_blocks_html (41,545 microjoules, 0.20%)</title><rect x="806.1" y="213" width="2.3" height="15.0" fill="rgb(246,192,45)" rx="2" ry="2" />
+<text  x="809.08" y="223.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::remove_keys_not_in_schema (166,282 microjoules, 0.79%)</title><rect x="1039.3" y="357" width="9.3" height="15.0" fill="rgb(205,0,0)" rx="2" ry="2" />
+<text  x="1042.34" y="367.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::compute_preset_vars (193,514 microjoules, 0.91%)</title><rect x="894.7" y="357" width="10.8" height="15.0" fill="rgb(211,30,7)" rx="2" ry="2" />
+<text  x="897.70" y="367.5" ></text>
+</g>
+<g >
+<title>resolve_block_template (1,374,000 microjoules, 6.50%)</title><rect x="985.2" y="517" width="76.6" height="15.0" fill="rgb(240,165,39)" rx="2" ry="2" />
+<text  x="988.18" y="527.5" >resolve_..</text>
+</g>
+<g >
+<title>WP_Textdomain_Registry::get (54,526 microjoules, 0.26%)</title><rect x="863.2" y="437" width="3.0" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="866.17" y="447.5" ></text>
+</g>
+<g >
+<title>_wp_array_get (50,626 microjoules, 0.24%)</title><rect x="584.7" y="261" width="2.9" height="15.0" fill="rgb(205,1,0)" rx="2" ry="2" />
+<text  x="587.74" y="271.5" ></text>
+</g>
+<g >
+<title>do_blocks (5,908,129 microjoules, 27.93%)</title><rect x="271.9" y="453" width="329.6" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="274.94" y="463.5" >do_blocks</text>
+</g>
+<g >
+<title>WP_Hook::apply_filters (64,412 microjoules, 0.30%)</title><rect x="813.7" y="261" width="3.6" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="816.71" y="271.5" ></text>
+</g>
+<g >
+<title>mysqli_query (200,431 microjoules, 0.95%)</title><rect x="620.6" y="373" width="11.2" height="15.0" fill="rgb(208,18,4)" rx="2" ry="2" />
+<text  x="623.63" y="383.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::get_default_slugs (74,690 microjoules, 0.35%)</title><rect x="872.6" y="357" width="4.2" height="15.0" fill="rgb(220,69,16)" rx="2" ry="2" />
+<text  x="875.59" y="367.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON_Data::__construct (54,778 microjoules, 0.26%)</title><rect x="667.4" y="277" width="3.1" height="15.0" fill="rgb(232,127,30)" rx="2" ry="2" />
+<text  x="670.39" y="287.5" ></text>
+</g>
+<g >
+<title>mysqli_query (120,807 microjoules, 0.57%)</title><rect x="1096.7" y="437" width="6.7" height="15.0" fill="rgb(208,18,4)" rx="2" ry="2" />
+<text  x="1099.68" y="447.5" ></text>
+</g>
+<g >
+<title>_get_block_templates_files (171,403 microjoules, 0.81%)</title><rect x="975.6" y="485" width="9.6" height="15.0" fill="rgb(234,135,32)" rx="2" ry="2" />
+<text  x="978.62" y="495.5" ></text>
+</g>
+<g >
+<title>&lt;main&gt; (182,909 microjoules, 0.86%)</title><rect x="36.7" y="533" width="10.2" height="15.0" fill="rgb(205,3,0)" rx="2" ry="2" />
+<text  x="39.68" y="543.5" ></text>
+</g>
+<g >
+<title>_wp_array_set (74,690 microjoules, 0.35%)</title><rect x="882.5" y="341" width="4.2" height="15.0" fill="rgb(227,105,25)" rx="2" ry="2" />
+<text  x="885.53" y="351.5" ></text>
+</g>
+<g >
+<title>get_locale (52,153 microjoules, 0.25%)</title><rect x="195.4" y="533" width="2.9" height="15.0" fill="rgb(251,214,51)" rx="2" ry="2" />
+<text  x="198.41" y="543.5" ></text>
+</g>
+<g >
+<title>WP_Hook::apply_filters (1,130,540 microjoules, 5.34%)</title><rect x="313.8" y="277" width="63.1" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="316.83" y="287.5" >WP_Hoo..</text>
+</g>
+<g >
+<title>safecss_filter_attr (127,764 microjoules, 0.60%)</title><rect x="922.1" y="309" width="7.2" height="15.0" fill="rgb(245,184,44)" rx="2" ry="2" />
+<text  x="925.13" y="319.5" ></text>
+</g>
+<g >
+<title>WP_Tax_Query::get_sql_for_clause (48,557 microjoules, 0.23%)</title><rect x="964.4" y="389" width="2.7" height="15.0" fill="rgb(207,13,3)" rx="2" ry="2" />
+<text  x="967.37" y="399.5" ></text>
+</g>
+<g >
+<title>wpdb::_do_query (78,067 microjoules, 0.37%)</title><rect x="1067.4" y="421" width="4.4" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="1070.43" y="431.5" ></text>
+</g>
+<g >
+<title>get_the_block_template_html (10,781,672 microjoules, 50.97%)</title><rect x="259.2" y="549" width="601.5" height="15.0" fill="rgb(211,27,6)" rx="2" ry="2" />
+<text  x="262.19" y="559.5" >get_the_block_template_html</text>
+</g>
+<g >
+<title>WP_Hook::apply_filters (91,019 microjoules, 0.43%)</title><rect x="567.4" y="341" width="5.0" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="570.36" y="351.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::get_block_classes (86,564 microjoules, 0.41%)</title><rect x="577.1" y="277" width="4.8" height="15.0" fill="rgb(238,152,36)" rx="2" ry="2" />
+<text  x="580.09" y="287.5" ></text>
+</g>
+<g >
+<title>WP_Query::query (244,236 microjoules, 1.15%)</title><rect x="749.3" y="277" width="13.6" height="15.0" fill="rgb(215,49,11)" rx="2" ry="2" />
+<text  x="752.28" y="287.5" ></text>
+</g>
+<g >
+<title>wp_print_inline_script_tag (54,526 microjoules, 0.26%)</title><rect x="866.2" y="469" width="3.1" height="15.0" fill="rgb(229,111,26)" rx="2" ry="2" />
+<text  x="869.21" y="479.5" ></text>
+</g>
+<g >
+<title>WP_Interactivity_API::process_directives (269,887 microjoules, 1.28%)</title><rect x="769.6" y="357" width="15.0" height="15.0" fill="rgb(207,12,2)" rx="2" ry="2" />
+<text  x="772.56" y="367.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::is_safe_css_declaration (64,412 microjoules, 0.30%)</title><rect x="908.4" y="341" width="3.6" height="15.0" fill="rgb(207,10,2)" rx="2" ry="2" />
+<text  x="911.38" y="351.5" ></text>
+</g>
+<g >
+<title>wpdb::_do_query (125,315 microjoules, 0.59%)</title><rect x="735.7" y="165" width="7.0" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="738.66" y="175.5" ></text>
+</g>
+<g >
+<title>wpdb::set_sql_mode (86,703 microjoules, 0.41%)</title><rect x="234.7" y="485" width="4.8" height="15.0" fill="rgb(230,118,28)" rx="2" ry="2" />
+<text  x="237.71" y="495.5" ></text>
+</g>
+<g >
+<title>register_block_type_from_metadata (62,603 microjoules, 0.30%)</title><rect x="119.0" y="469" width="3.5" height="15.0" fill="rgb(212,32,7)" rx="2" ry="2" />
+<text  x="121.99" y="479.5" ></text>
+</g>
+<g >
+<title>array_replace_recursive (72,748 microjoules, 0.34%)</title><rect x="693.8" y="277" width="4.1" height="15.0" fill="rgb(243,176,42)" rx="2" ry="2" />
+<text  x="696.82" y="287.5" ></text>
+</g>
+<g >
+<title>register_block_type_from_metadata (70,900 microjoules, 0.34%)</title><rect x="100.5" y="469" width="3.9" height="15.0" fill="rgb(212,32,7)" rx="2" ry="2" />
+<text  x="103.49" y="479.5" ></text>
+</g>
+<g >
+<title>apply_filters (54,857 microjoules, 0.26%)</title><rect x="828.2" y="437" width="3.0" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="831.17" y="447.5" ></text>
+</g>
+<g >
+<title>_wp_register_default_font_collections (80,747 microjoules, 0.38%)</title><rect x="96.0" y="485" width="4.5" height="15.0" fill="rgb(224,89,21)" rx="2" ry="2" />
+<text  x="98.99" y="495.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON_Resolver::get_merged_data (68,311 microjoules, 0.32%)</title><rect x="556.1" y="277" width="3.8" height="15.0" fill="rgb(251,214,51)" rx="2" ry="2" />
+<text  x="559.09" y="287.5" ></text>
+</g>
+<g >
+<title>WP_Block_Parser::parse (101,911 microjoules, 0.48%)</title><rect x="996.1" y="421" width="5.7" height="15.0" fill="rgb(242,173,41)" rx="2" ry="2" />
+<text  x="999.09" y="431.5" ></text>
+</g>
+<g >
+<title>wptexturize (179,009 microjoules, 0.85%)</title><rect x="850.7" y="533" width="10.0" height="15.0" fill="rgb(233,132,31)" rx="2" ry="2" />
+<text  x="853.69" y="543.5" ></text>
+</g>
+<g >
+<title>mysqli_query (323,825 microjoules, 1.53%)</title><rect x="75.0" y="325" width="18.1" height="15.0" fill="rgb(208,18,4)" rx="2" ry="2" />
+<text  x="78.04" y="335.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::get_block_nodes (68,311 microjoules, 0.32%)</title><rect x="373.1" y="213" width="3.8" height="15.0" fill="rgb(214,41,10)" rx="2" ry="2" />
+<text  x="376.09" y="223.5" ></text>
+</g>
+<g >
+<title>wpdb::get_results (120,807 microjoules, 0.57%)</title><rect x="1096.7" y="485" width="6.7" height="15.0" fill="rgb(234,136,32)" rx="2" ry="2" />
+<text  x="1099.68" y="495.5" ></text>
+</g>
+<g >
+<title>WP_Block::render (4,693,773 microjoules, 22.19%)</title><rect x="287.0" y="325" width="261.9" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="290.03" y="335.5" >WP_Block::render</text>
+</g>
+<g >
+<title>wpdb::_do_query (58,766 microjoules, 0.28%)</title><rect x="1064.1" y="421" width="3.3" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="1067.15" y="431.5" ></text>
+</g>
+<g >
+<title>wpdb::_do_query (114,841 microjoules, 0.54%)</title><rect x="386.1" y="117" width="6.5" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="389.15" y="127.5" ></text>
+</g>
+<g >
+<title>render_block_core_pattern (54,526 microjoules, 0.26%)</title><rect x="397.2" y="149" width="3.0" height="15.0" fill="rgb(215,50,11)" rx="2" ry="2" />
+<text  x="400.20" y="159.5" ></text>
+</g>
+<g >
+<title>WP_Hook::do_action (1,075,520 microjoules, 5.08%)</title><rect x="869.3" y="453" width="60.0" height="15.0" fill="rgb(233,129,30)" rx="2" ry="2" />
+<text  x="872.26" y="463.5" >WP_Hoo..</text>
+</g>
+<g >
+<title>WP_Hook::do_action (47,795 microjoules, 0.23%)</title><rect x="132.0" y="421" width="2.7" height="15.0" fill="rgb(233,129,30)" rx="2" ry="2" />
+<text  x="135.00" y="431.5" ></text>
+</g>
+<g >
+<title>WP_Block_Parser::proceed (90,656 microjoules, 0.43%)</title><rect x="795.3" y="357" width="5.1" height="15.0" fill="rgb(207,10,2)" rx="2" ry="2" />
+<text  x="798.34" y="367.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON_Resolver::get_theme_data (133,456 microjoules, 0.63%)</title><rect x="879.3" y="373" width="7.4" height="15.0" fill="rgb(228,106,25)" rx="2" ry="2" />
+<text  x="882.25" y="383.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON_Resolver::get_theme_data (59,740 microjoules, 0.28%)</title><rect x="664.1" y="293" width="3.3" height="15.0" fill="rgb(228,106,25)" rx="2" ry="2" />
+<text  x="667.06" y="303.5" ></text>
+</g>
+<g >
+<title>render_block (5,908,129 microjoules, 27.93%)</title><rect x="271.9" y="437" width="329.6" height="15.0" fill="rgb(237,147,35)" rx="2" ry="2" />
+<text  x="274.94" y="447.5" >render_block</text>
+</g>
+<g >
+<title>wpdb::query (158,007 microjoules, 0.75%)</title><rect x="198.3" y="453" width="8.8" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="201.32" y="463.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::get_block_nodes (95,382 microjoules, 0.45%)</title><rect x="477.0" y="229" width="5.4" height="15.0" fill="rgb(214,41,10)" rx="2" ry="2" />
+<text  x="480.04" y="239.5" ></text>
+</g>
+<g >
+<title>register_block_pattern (51,730 microjoules, 0.24%)</title><rect x="93.1" y="469" width="2.9" height="15.0" fill="rgb(245,187,44)" rx="2" ry="2" />
+<text  x="96.10" y="479.5" ></text>
+</g>
+<g >
+<title>wpdb::get_results (184,641 microjoules, 0.87%)</title><rect x="1075.1" y="389" width="10.3" height="15.0" fill="rgb(234,136,32)" rx="2" ry="2" />
+<text  x="1078.12" y="399.5" ></text>
+</g>
+<g >
+<title>do_blocks (3,506,227 microjoules, 16.58%)</title><rect x="635.6" y="469" width="195.6" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="638.62" y="479.5" >do_blocks</text>
+</g>
+<g >
+<title>WP_Theme_JSON::get_valid_block_style_variations (44,752 microjoules, 0.21%)</title><rect x="719.3" y="261" width="2.5" height="15.0" fill="rgb(242,172,41)" rx="2" ry="2" />
+<text  x="722.32" y="271.5" ></text>
+</g>
+<g >
+<title>WP_Query::query (54,857 microjoules, 0.26%)</title><rect x="746.2" y="277" width="3.1" height="15.0" fill="rgb(215,49,11)" rx="2" ry="2" />
+<text  x="749.21" y="287.5" ></text>
+</g>
+<g >
+<title>substr (57,675 microjoules, 0.27%)</title><rect x="174.7" y="437" width="3.3" height="15.0" fill="rgb(253,221,52)" rx="2" ry="2" />
+<text  x="177.75" y="447.5" ></text>
+</g>
+<g >
+<title>WP_Block_Parser::proceed (101,911 microjoules, 0.48%)</title><rect x="996.1" y="405" width="5.7" height="15.0" fill="rgb(207,10,2)" rx="2" ry="2" />
+<text  x="999.09" y="415.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::merge (68,311 microjoules, 0.32%)</title><rect x="373.1" y="229" width="3.8" height="15.0" fill="rgb(245,185,44)" rx="2" ry="2" />
+<text  x="376.09" y="239.5" ></text>
+</g>
+<g >
+<title>WP_Navigation_Fallback::get_most_recently_published_navigation (189,166 microjoules, 0.89%)</title><rect x="735.7" y="277" width="10.5" height="15.0" fill="rgb(243,176,42)" rx="2" ry="2" />
+<text  x="738.66" y="287.5" ></text>
+</g>
+<g >
+<title>wp_get_inline_script_tag (54,526 microjoules, 0.26%)</title><rect x="866.2" y="453" width="3.1" height="15.0" fill="rgb(210,23,5)" rx="2" ry="2" />
+<text  x="869.21" y="463.5" ></text>
+</g>
+<g >
+<title>wp_enqueue_global_styles (947,756 microjoules, 4.48%)</title><rect x="869.3" y="421" width="52.8" height="15.0" fill="rgb(216,52,12)" rx="2" ry="2" />
+<text  x="872.26" y="431.5" >wp_en..</text>
+</g>
+<g >
+<title>wp_enqueue_stored_styles (127,764 microjoules, 0.60%)</title><rect x="922.1" y="421" width="7.2" height="15.0" fill="rgb(209,21,5)" rx="2" ry="2" />
+<text  x="925.13" y="431.5" ></text>
+</g>
+<g >
+<title>translate_settings_using_i18n_schema (76,055 microjoules, 0.36%)</title><rect x="715.1" y="213" width="4.2" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="718.08" y="223.5" ></text>
+</g>
+<g >
+<title>mysqli_query (316,914 microjoules, 1.50%)</title><rect x="420.4" y="165" width="17.7" height="15.0" fill="rgb(208,18,4)" rx="2" ry="2" />
+<text  x="423.41" y="175.5" ></text>
+</g>
+<g >
+<title>wpdb::_do_query (120,807 microjoules, 0.57%)</title><rect x="1096.7" y="453" width="6.7" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="1099.68" y="463.5" ></text>
+</g>
+<g >
+<title>wp_default_scripts (42,019 microjoules, 0.20%)</title><rect x="848.3" y="389" width="2.4" height="15.0" fill="rgb(244,180,43)" rx="2" ry="2" />
+<text  x="851.35" y="399.5" ></text>
+</g>
+<g >
+<title>_prime_post_caches (125,315 microjoules, 0.59%)</title><rect x="735.7" y="213" width="7.0" height="15.0" fill="rgb(222,78,18)" rx="2" ry="2" />
+<text  x="738.66" y="223.5" ></text>
+</g>
+<g >
+<title>wp_get_custom_css (76,055 microjoules, 0.36%)</title><rect x="890.5" y="405" width="4.2" height="15.0" fill="rgb(229,110,26)" rx="2" ry="2" />
+<text  x="893.45" y="415.5" ></text>
+</g>
+<g >
+<title>apply_filters (90,656 microjoules, 0.43%)</title><rect x="953.6" y="469" width="5.1" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="956.60" y="479.5" ></text>
+</g>
+<g >
+<title>WP_Query::generate_cache_key (50,626 microjoules, 0.24%)</title><rect x="961.5" y="437" width="2.9" height="15.0" fill="rgb(243,178,42)" rx="2" ry="2" />
+<text  x="964.55" y="447.5" ></text>
+</g>
+<g >
+<title>wp_render_layout_support_flag (50,895 microjoules, 0.24%)</title><rect x="604.9" y="453" width="2.8" height="15.0" fill="rgb(207,9,2)" rx="2" ry="2" />
+<text  x="607.88" y="463.5" ></text>
+</g>
+<g >
+<title>wpdb::query (200,431 microjoules, 0.95%)</title><rect x="620.6" y="405" width="11.2" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="623.63" y="415.5" ></text>
+</g>
+<g >
+<title>_load_script_textdomain_from_src (54,526 microjoules, 0.26%)</title><rect x="863.2" y="453" width="3.0" height="15.0" fill="rgb(243,176,42)" rx="2" ry="2" />
+<text  x="866.17" y="463.5" ></text>
+</g>
+<g >
+<title>wp_get_theme_data_custom_templates (1,076,500 microjoules, 5.09%)</title><rect x="1001.8" y="453" width="60.0" height="15.0" fill="rgb(249,206,49)" rx="2" ry="2" />
+<text  x="1004.78" y="463.5" >wp_get..</text>
+</g>
+<g >
+<title>WP_Navigation_Block_Renderer::has_submenus (54,857 microjoules, 0.26%)</title><rect x="746.2" y="309" width="3.1" height="15.0" fill="rgb(235,138,33)" rx="2" ry="2" />
+<text  x="749.21" y="319.5" ></text>
+</g>
+<g >
+<title>wp_enqueue_scripts (1,075,520 microjoules, 5.08%)</title><rect x="869.3" y="485" width="60.0" height="15.0" fill="rgb(221,76,18)" rx="2" ry="2" />
+<text  x="872.26" y="495.5" >wp_enq..</text>
+</g>
+<g >
+<title>WP_Style_Engine_CSS_Rule::get_css (127,764 microjoules, 0.60%)</title><rect x="922.1" y="357" width="7.2" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="925.13" y="367.5" ></text>
+</g>
+<g >
+<title>WP_Block::render (527,132 microjoules, 2.49%)</title><rect x="376.9" y="261" width="29.4" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="379.90" y="271.5" >WP..</text>
+</g>
+<g >
+<title>wp_render_block_style_variation_support_styles (1,699,146 microjoules, 8.03%)</title><rect x="445.8" y="277" width="94.8" height="15.0" fill="rgb(251,213,51)" rx="2" ry="2" />
+<text  x="448.78" y="287.5" >wp_render_b..</text>
+</g>
+<g >
+<title>WP_Block_Parser::next_token (51,730 microjoules, 0.24%)</title><rect x="281.3" y="309" width="2.9" height="15.0" fill="rgb(252,219,52)" rx="2" ry="2" />
+<text  x="284.30" y="319.5" ></text>
+</g>
+<g >
+<title>preg_split (54,857 microjoules, 0.26%)</title><rect x="857.6" y="517" width="3.1" height="15.0" fill="rgb(230,116,27)" rx="2" ry="2" />
+<text  x="860.62" y="527.5" ></text>
+</g>
+<g >
+<title>WP_Block_List::offsetGet (64,412 microjoules, 0.30%)</title><rect x="784.6" y="389" width="3.6" height="15.0" fill="rgb(234,136,32)" rx="2" ry="2" />
+<text  x="787.62" y="399.5" ></text>
+</g>
+<g >
+<title>WP_Block_Parser::proceed (41,545 microjoules, 0.20%)</title><rect x="817.3" y="357" width="2.3" height="15.0" fill="rgb(207,10,2)" rx="2" ry="2" />
+<text  x="820.30" y="367.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON_Resolver::get_merged_data (182,108 microjoules, 0.86%)</title><rect x="912.0" y="389" width="10.1" height="15.0" fill="rgb(251,214,51)" rx="2" ry="2" />
+<text  x="914.97" y="399.5" ></text>
+</g>
+<g >
+<title>wp_get_object_terms (446,294 microjoules, 2.11%)</title><rect x="1071.8" y="469" width="24.9" height="15.0" fill="rgb(251,214,51)" rx="2" ry="2" />
+<text  x="1074.78" y="479.5" >w..</text>
+</g>
+<g >
+<title>wp_get_view_transitions_admin_css (47,795 microjoules, 0.23%)</title><rect x="132.0" y="373" width="2.7" height="15.0" fill="rgb(240,164,39)" rx="2" ry="2" />
+<text  x="135.00" y="383.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::__construct (54,778 microjoules, 0.26%)</title><rect x="667.4" y="261" width="3.1" height="15.0" fill="rgb(238,152,36)" rx="2" ry="2" />
+<text  x="670.39" y="271.5" ></text>
+</g>
+<g >
+<title>file_get_contents (72,748 microjoules, 0.34%)</title><rect x="932.1" y="469" width="4.0" height="15.0" fill="rgb(209,22,5)" rx="2" ry="2" />
+<text  x="935.08" y="479.5" ></text>
+</g>
+<g >
+<title>resolve_block_template (475,443 microjoules, 2.25%)</title><rect x="958.7" y="517" width="26.5" height="15.0" fill="rgb(240,165,39)" rx="2" ry="2" />
+<text  x="961.66" y="527.5" >r..</text>
+</g>
+<g >
+<title>WP_Theme_JSON::sanitize (167,530 microjoules, 0.79%)</title><rect x="451.4" y="229" width="9.4" height="15.0" fill="rgb(229,113,27)" rx="2" ry="2" />
+<text  x="454.43" y="239.5" ></text>
+</g>
+<g >
+<title>render_block_core_query_pagination_next (70,573 microjoules, 0.33%)</title><rect x="307.2" y="277" width="3.9" height="15.0" fill="rgb(206,7,1)" rx="2" ry="2" />
+<text  x="310.16" y="287.5" ></text>
+</g>
+<g >
+<title>WP_Hook::apply_filters (70,900 microjoules, 0.34%)</title><rect x="303.2" y="213" width="4.0" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="306.21" y="223.5" ></text>
+</g>
+<g >
+<title>WP_Block::render (303,108 microjoules, 1.43%)</title><rect x="800.4" y="309" width="16.9" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="803.39" y="319.5" ></text>
+</g>
+<g >
+<title>WP_Query::query (200,431 microjoules, 0.95%)</title><rect x="620.6" y="453" width="11.2" height="15.0" fill="rgb(215,49,11)" rx="2" ry="2" />
+<text  x="623.63" y="463.5" ></text>
+</g>
+<g >
+<title>do_action_ref_array (187,816 microjoules, 0.89%)</title><rect x="840.2" y="437" width="10.5" height="15.0" fill="rgb(232,126,30)" rx="2" ry="2" />
+<text  x="843.21" y="447.5" ></text>
+</g>
+<g >
+<title>_build_block_template_result_from_file (95,382 microjoules, 0.45%)</title><rect x="834.9" y="453" width="5.3" height="15.0" fill="rgb(248,198,47)" rx="2" ry="2" />
+<text  x="837.89" y="463.5" ></text>
+</g>
+<g >
+<title>WP_Block::render (137,788 microjoules, 0.65%)</title><rect x="392.6" y="165" width="7.6" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="395.55" y="175.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::get_block_element_selectors (106,442 microjoules, 0.50%)</title><rect x="1009.9" y="373" width="6.0" height="15.0" fill="rgb(219,67,16)" rx="2" ry="2" />
+<text  x="1012.93" y="383.5" ></text>
+</g>
+<g >
+<title>WP_Query::get_posts (189,166 microjoules, 0.89%)</title><rect x="735.7" y="229" width="10.5" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="738.66" y="239.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::__construct (914,052 microjoules, 4.32%)</title><rect x="1001.8" y="405" width="51.0" height="15.0" fill="rgb(238,152,36)" rx="2" ry="2" />
+<text  x="1004.78" y="415.5" >WP_Th..</text>
+</g>
+<g >
+<title>wp (1,013,909 microjoules, 4.79%)</title><rect x="1061.8" y="581" width="56.6" height="15.0" fill="rgb(221,75,17)" rx="2" ry="2" />
+<text  x="1064.83" y="591.5" >wp</text>
+</g>
+<g >
+<title>_register_theme_block_patterns (466,574 microjoules, 2.21%)</title><rect x="70.0" y="485" width="26.0" height="15.0" fill="rgb(245,185,44)" rx="2" ry="2" />
+<text  x="72.96" y="495.5" >_..</text>
+</g>
+<g >
+<title>WP_Theme_JSON::get_root_layout_rules (64,412 microjoules, 0.30%)</title><rect x="908.4" y="373" width="3.6" height="15.0" fill="rgb(214,44,10)" rx="2" ry="2" />
+<text  x="911.38" y="383.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::__construct (103,335 microjoules, 0.49%)</title><rect x="697.9" y="261" width="5.7" height="15.0" fill="rgb(238,152,36)" rx="2" ry="2" />
+<text  x="700.88" y="271.5" ></text>
+</g>
+<g >
+<title>wp_cache_add_multiple (78,067 microjoules, 0.37%)</title><rect x="1067.4" y="453" width="4.4" height="15.0" fill="rgb(222,82,19)" rx="2" ry="2" />
+<text  x="1070.43" y="463.5" ></text>
+</g>
+<g >
+<title>WP_Block::render (303,108 microjoules, 1.43%)</title><rect x="800.4" y="357" width="16.9" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="803.39" y="367.5" ></text>
+</g>
+<g >
+<title>apply_block_hooks_to_content (81,304 microjoules, 0.38%)</title><rect x="279.7" y="373" width="4.5" height="15.0" fill="rgb(242,170,40)" rx="2" ry="2" />
+<text  x="282.65" y="383.5" ></text>
+</g>
+<g >
+<title>get_terms (446,294 microjoules, 2.11%)</title><rect x="1071.8" y="453" width="24.9" height="15.0" fill="rgb(247,195,46)" rx="2" ry="2" />
+<text  x="1074.78" y="463.5" >g..</text>
+</g>
+<g >
+<title>wpdb::db_connect (580,875 microjoules, 2.75%)</title><rect x="207.1" y="501" width="32.4" height="15.0" fill="rgb(231,119,28)" rx="2" ry="2" />
+<text  x="210.14" y="511.5" >wp..</text>
+</g>
+<g >
+<title>parse_blocks (76,972 microjoules, 0.36%)</title><rect x="638.1" y="453" width="4.3" height="15.0" fill="rgb(246,191,45)" rx="2" ry="2" />
+<text  x="641.12" y="463.5" ></text>
+</g>
+<g >
+<title>wp_render_block_style_variation_support_styles (68,311 microjoules, 0.32%)</title><rect x="556.1" y="293" width="3.8" height="15.0" fill="rgb(251,213,51)" rx="2" ry="2" />
+<text  x="559.09" y="303.5" ></text>
+</g>
+<g >
+<title>WP_Style_Engine_CSS_Declarations::filter_declaration (127,764 microjoules, 0.60%)</title><rect x="922.1" y="325" width="7.2" height="15.0" fill="rgb(211,28,6)" rx="2" ry="2" />
+<text  x="925.13" y="335.5" ></text>
+</g>
+<g >
+<title>WP_Block::render (2,484,665 microjoules, 11.75%)</title><rect x="646.0" y="389" width="138.6" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="649.01" y="399.5" >WP_Block::render</text>
+</g>
+<g >
+<title>WP_Query::get_posts (244,236 microjoules, 1.15%)</title><rect x="749.3" y="261" width="13.6" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="752.28" y="271.5" ></text>
+</g>
+<g >
+<title>wpdb::query (229,805 microjoules, 1.09%)</title><rect x="242.4" y="469" width="12.9" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="245.43" y="479.5" ></text>
+</g>
+<g >
+<title>get_pages (244,236 microjoules, 1.15%)</title><rect x="749.3" y="293" width="13.6" height="15.0" fill="rgb(221,77,18)" rx="2" ry="2" />
+<text  x="752.28" y="303.5" ></text>
+</g>
+<g >
+<title>array_replace_recursive (156,685 microjoules, 0.74%)</title><rect x="507.8" y="229" width="8.8" height="15.0" fill="rgb(243,176,42)" rx="2" ry="2" />
+<text  x="510.84" y="239.5" ></text>
+</g>
+<g >
+<title>mysqli_set_charset (31,925 microjoules, 0.15%)</title><rect x="232.9" y="469" width="1.8" height="15.0" fill="rgb(237,150,36)" rx="2" ry="2" />
+<text  x="235.92" y="479.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::sanitize (68,311 microjoules, 0.32%)</title><rect x="556.1" y="229" width="3.8" height="15.0" fill="rgb(229,113,27)" rx="2" ry="2" />
+<text  x="559.09" y="239.5" ></text>
+</g>
+<g >
+<title>translate_settings_using_i18n_schema (57,675 microjoules, 0.27%)</title><rect x="122.5" y="453" width="3.2" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="125.48" y="463.5" ></text>
+</g>
+<g >
+<title>WP_Hook::apply_filters (70,573 microjoules, 0.33%)</title><rect x="563.4" y="293" width="4.0" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="566.43" y="303.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::get_default_slugs (70,089 microjoules, 0.33%)</title><rect x="1123.4" y="597" width="3.9" height="15.0" fill="rgb(220,69,16)" rx="2" ry="2" />
+<text  x="1126.37" y="607.5" ></text>
+</g>
+<g >
+<title>wp_load_alloptions (229,805 microjoules, 1.09%)</title><rect x="242.4" y="501" width="12.9" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="245.43" y="511.5" ></text>
+</g>
+<g >
+<title>apply_filters (153,194 microjoules, 0.72%)</title><rect x="819.6" y="373" width="8.6" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="822.62" y="383.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::get_settings_values_by_slug (193,514 microjoules, 0.91%)</title><rect x="894.7" y="341" width="10.8" height="15.0" fill="rgb(228,110,26)" rx="2" ry="2" />
+<text  x="897.70" y="351.5" ></text>
+</g>
+<g >
+<title>_prime_post_caches (703,934 microjoules, 3.33%)</title><rect x="1064.1" y="501" width="39.3" height="15.0" fill="rgb(222,78,18)" rx="2" ry="2" />
+<text  x="1067.15" y="511.5" >_pr..</text>
+</g>
+<g >
+<title>cache_users (379,517 microjoules, 1.79%)</title><rect x="420.4" y="245" width="21.2" height="15.0" fill="rgb(239,158,37)" rx="2" ry="2" />
+<text  x="423.41" y="255.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON_Resolver::get_block_data (103,335 microjoules, 0.49%)</title><rect x="697.9" y="293" width="5.7" height="15.0" fill="rgb(229,114,27)" rx="2" ry="2" />
+<text  x="700.88" y="303.5" ></text>
+</g>
+<g >
+<title>apply_filters (83,262 microjoules, 0.39%)</title><rect x="544.2" y="293" width="4.7" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="547.24" y="303.5" ></text>
+</g>
+<g >
+<title>wp_head (1,657,016 microjoules, 7.83%)</title><rect x="866.2" y="549" width="92.5" height="15.0" fill="rgb(210,26,6)" rx="2" ry="2" />
+<text  x="869.21" y="559.5" >wp_head</text>
+</g>
+<g >
+<title>wpdb::_do_query (121,467 microjoules, 0.57%)</title><rect x="1078.6" y="357" width="6.8" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="1081.64" y="367.5" ></text>
+</g>
+<g >
+<title>WP_Query::parse_query (112,939 microjoules, 0.53%)</title><rect x="670.5" y="229" width="6.3" height="15.0" fill="rgb(220,70,16)" rx="2" ry="2" />
+<text  x="673.45" y="239.5" ></text>
+</g>
+<g >
+<title>wp_normalize_path (68,311 microjoules, 0.32%)</title><rect x="191.6" y="453" width="3.8" height="15.0" fill="rgb(211,29,6)" rx="2" ry="2" />
+<text  x="194.60" y="463.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::merge (50,626 microjoules, 0.24%)</title><rect x="417.6" y="197" width="2.8" height="15.0" fill="rgb(245,185,44)" rx="2" ry="2" />
+<text  x="420.59" y="207.5" ></text>
+</g>
+<g >
+<title>WP_Term_Query::get_terms (446,294 microjoules, 2.11%)</title><rect x="1071.8" y="421" width="24.9" height="15.0" fill="rgb(206,7,1)" rx="2" ry="2" />
+<text  x="1074.78" y="431.5" >W..</text>
+</g>
+<g >
+<title>do_blocks (54,526 microjoules, 0.26%)</title><rect x="397.2" y="133" width="3.0" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="400.20" y="143.5" ></text>
+</g>
+<g >
+<title>register_post_type (159,208 microjoules, 0.75%)</title><rect x="55.7" y="517" width="8.9" height="15.0" fill="rgb(232,127,30)" rx="2" ry="2" />
+<text  x="58.74" y="527.5" ></text>
+</g>
+<g >
+<title>_get_block_templates_files (1,076,500 microjoules, 5.09%)</title><rect x="1001.8" y="485" width="60.0" height="15.0" fill="rgb(234,135,32)" rx="2" ry="2" />
+<text  x="1004.78" y="495.5" >_get_b..</text>
+</g>
+<g >
+<title>WP_HTML_Tag_Processor::skip_rawtext (54,778 microjoules, 0.26%)</title><rect x="950.5" y="405" width="3.1" height="15.0" fill="rgb(254,227,54)" rx="2" ry="2" />
+<text  x="953.54" y="415.5" ></text>
+</g>
+<g >
+<title>wpdb::_do_query (67,299 microjoules, 0.32%)</title><rect x="765.8" y="213" width="3.8" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="768.81" y="223.5" ></text>
+</g>
+<g >
+<title>json_decode (51,730 microjoules, 0.24%)</title><rect x="281.3" y="293" width="2.9" height="15.0" fill="rgb(241,166,39)" rx="2" ry="2" />
+<text  x="284.30" y="303.5" ></text>
+</g>
+<g >
+<title>wp_json_file_decode (89,119 microjoules, 0.42%)</title><rect x="659.1" y="261" width="5.0" height="15.0" fill="rgb(234,134,32)" rx="2" ry="2" />
+<text  x="662.09" y="271.5" ></text>
+</g>
+<g >
+<title>parse_blocks (90,656 microjoules, 0.43%)</title><rect x="795.3" y="389" width="5.1" height="15.0" fill="rgb(246,191,45)" rx="2" ry="2" />
+<text  x="798.34" y="399.5" ></text>
+</g>
+<g >
+<title>WP_Query::__construct (200,431 microjoules, 0.95%)</title><rect x="620.6" y="469" width="11.2" height="15.0" fill="rgb(254,226,54)" rx="2" ry="2" />
+<text  x="623.63" y="479.5" ></text>
+</g>
+<g >
+<title>wpdb::query (78,067 microjoules, 0.37%)</title><rect x="1067.4" y="437" width="4.4" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="1070.43" y="447.5" ></text>
+</g>
+<g >
+<title>wpdb::query (62,603 microjoules, 0.30%)</title><rect x="438.1" y="213" width="3.5" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="441.09" y="223.5" ></text>
+</g>
+<g >
+<title>WP_Interactivity_API::get_directive_entries (108,806 microjoules, 0.51%)</title><rect x="778.6" y="309" width="6.0" height="15.0" fill="rgb(252,216,51)" rx="2" ry="2" />
+<text  x="781.55" y="319.5" ></text>
+</g>
+<g >
+<title>WP_Block_Styles_Registry::get_all_registered (58,766 microjoules, 0.28%)</title><rect x="414.3" y="165" width="3.3" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="417.31" y="175.5" ></text>
+</g>
+<g >
+<title>wp_using_ext_object_cache (50,895 microjoules, 0.24%)</title><rect x="1103.4" y="501" width="2.9" height="15.0" fill="rgb(230,117,28)" rx="2" ry="2" />
+<text  x="1106.42" y="511.5" ></text>
+</g>
+<g >
+<title>get_option (158,007 microjoules, 0.75%)</title><rect x="198.3" y="485" width="8.8" height="15.0" fill="rgb(236,146,35)" rx="2" ry="2" />
+<text  x="201.32" y="495.5" ></text>
+</g>
+<g >
+<title>WP_Hook::apply_filters (54,526 microjoules, 0.26%)</title><rect x="397.2" y="69" width="3.0" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="400.20" y="79.5" ></text>
+</g>
+<g >
+<title>str_contains (62,603 microjoules, 0.30%)</title><rect x="1172.4" y="613" width="3.5" height="15.0" fill="rgb(246,190,45)" rx="2" ry="2" />
+<text  x="1175.37" y="623.5" ></text>
+</g>
+<g >
+<title>md5 (154,328 microjoules, 0.73%)</title><rect x="1151.2" y="613" width="8.6" height="15.0" fill="rgb(221,73,17)" rx="2" ry="2" />
+<text  x="1154.15" y="623.5" ></text>
+</g>
+<g >
+<title>WP_Theme_JSON::sanitize (202,172 microjoules, 0.96%)</title><rect x="406.3" y="181" width="11.3" height="15.0" fill="rgb(229,113,27)" rx="2" ry="2" />
+<text  x="409.31" y="191.5" ></text>
+</g>
+<g >
+<title>WP_Query::query (86,783 microjoules, 0.41%)</title><rect x="991.2" y="469" width="4.9" height="15.0" fill="rgb(215,49,11)" rx="2" ry="2" />
+<text  x="994.25" y="479.5" ></text>
+</g>
+<g >
+<title>wp_dequeue_style (64,412 microjoules, 0.30%)</title><rect x="784.6" y="373" width="3.6" height="15.0" fill="rgb(225,92,22)" rx="2" ry="2" />
+<text  x="787.62" y="383.5" ></text>
+</g>
+<g >
+<title>WP_Hook::do_action (187,816 microjoules, 0.89%)</title><rect x="840.2" y="421" width="10.5" height="15.0" fill="rgb(233,129,30)" rx="2" ry="2" />
+<text  x="843.21" y="431.5" ></text>
+</g>
+<g >
+<title>wpdb::get_results (244,236 microjoules, 1.15%)</title><rect x="749.3" y="245" width="13.6" height="15.0" fill="rgb(234,136,32)" rx="2" ry="2" />
+<text  x="752.28" y="255.5" ></text>
+</g>
+<g >
+<title>mysqli_query (54,526 microjoules, 0.26%)</title><rect x="1148.1" y="485" width="3.1" height="15.0" fill="rgb(208,18,4)" rx="2" ry="2" />
+<text  x="1151.11" y="495.5" ></text>
+</g>
+<g >
+<title>wp_footer (99,278 microjoules, 0.47%)</title><rect x="860.7" y="549" width="5.5" height="15.0" fill="rgb(226,98,23)" rx="2" ry="2" />
+<text  x="863.68" y="559.5" ></text>
+</g>
+<g >
+<title>WP_Hook::apply_filters (74,690 microjoules, 0.35%)</title><rect x="551.9" y="325" width="4.2" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="554.93" y="335.5" ></text>
+</g>
+<g >
+<title>WP_Theme::get_block_patterns (414,844 microjoules, 1.96%)</title><rect x="70.0" y="469" width="23.1" height="15.0" fill="rgb(234,133,31)" rx="2" ry="2" />
+<text  x="72.96" y="479.5" >W..</text>
+</g>
+<g >
+<title>mysqli_query (121,467 microjoules, 0.57%)</title><rect x="1078.6" y="341" width="6.8" height="15.0" fill="rgb(208,18,4)" rx="2" ry="2" />
+<text  x="1081.64" y="351.5" ></text>
+</g>
+<g >
+<title>_wp_array_get (166,786 microjoules, 0.79%)</title><rect x="496.2" y="229" width="9.3" height="15.0" fill="rgb(205,1,0)" rx="2" ry="2" />
+<text  x="499.19" y="239.5" ></text>
+</g>
+<g >
+<title>WP_Hook::apply_filters (2,280,684 microjoules, 10.78%)</title><rect x="68.2" y="501" width="127.2" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="71.18" y="511.5" >WP_Hook::apply_..</text>
+</g>
+<g >
+<title>WP_Block_List::offsetGet (54,526 microjoules, 0.26%)</title><rect x="548.9" y="325" width="3.0" height="15.0" fill="rgb(234,136,32)" rx="2" ry="2" />
+<text  x="551.88" y="335.5" ></text>
+</g>
+<g >
+<title>serialize (68,311 microjoules, 0.32%)</title><rect x="679.8" y="213" width="3.8" height="15.0" fill="rgb(210,24,5)" rx="2" ry="2" />
+<text  x="682.81" y="223.5" ></text>
+</g>
+</g>
+</svg>
