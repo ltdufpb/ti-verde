@@ -12,11 +12,12 @@ Ele integra medição de hardware via contadores RAPL (**Scaphandre**), amostrag
 3. [Principais Funcionalidades](#-principais-funcionalidades)
 4. [Como Funciona em Detalhes](#-como-funciona-em-detalhes)
 5. [Guia de Início Rápido (Quickstart)](#-guia-de-início-rápido-quickstart)
-6. [Configuração do Experimento](#-configuração-do-experimento)
-7. [Estrutura dos Arquivos de Resultado](#-estrutura-dos-arquivos-de-resultado)
-8. [Estrutura do Repositório](#-estrutura-do-repositório)
-9. [Calculadora de Carbono (`carbon.py`)](#-calculadora-de-carbono-carbonpy)
-10. [Limitações de Interpretação e Boas Práticas](#-limitações-de-interpretação-e-boas-práticas)
+6. [Medindo Aplicações em Containers Docker (Exemplo: WordPress)](#-medindo-aplicações-em-containers-docker-exemplo-wordpress)
+7. [Configuração do Experimento](#-configuração-do-experimento)
+8. [Estrutura dos Arquivos de Resultado](#-estrutura-dos-arquivos-de-resultado)
+9. [Estrutura do Repositório](#-estrutura-do-repositório)
+10. [Calculadora de Carbono (`carbon.py`)](#-calculadora-de-carbono-carbonpy)
+11. [Limitações de Interpretação e Boas Práticas](#-limitações-de-interpretação-e-boas-práticas)
 
 ---
 
@@ -172,6 +173,65 @@ Ao final da execução, o relatório de comparação estará disponível em `res
 
 ---
 
+## 🐳 Medindo Aplicações em Containers Docker (Exemplo: WordPress)
+
+Você pode utilizar o **Green PHP Lab** para medir o consumo de energia e o perfil de execução de aplicações PHP rodando em containers Docker locais (como WordPress, Laravel, Drupal, etc.).
+
+### Como Funciona com Docker
+- **Scaphandre (Hardware RAPL)**: Como os containers compartilham o kernel Linux do Host, o Scaphandre monitora o consumo da CPU/Memória diretamente no Host. O regex de processos (`SCAPHANDRE_PROCESS_REGEX`) pode ser configurado para capturar tanto o PHP quanto os containers de banco de dados (ex: `mysqld`, `mariadbd`).
+- **phpspy (Call Stacks)**: Inspeciona a memória do processo PHP no Host identificando automaticamente o PID nativo do container (`docker inspect -f '{{.State.Pid}}'`).
+- **k6 (Gerador de Carga)**: Envia requisições HTTP para a porta do Host onde o container web está mapeado (ex: `http://127.0.0.1:8080`).
+
+---
+
+### Passo a Passo: Medição do WordPress no Docker
+
+#### 1. Identificar o Container PHP Ativo
+Execute o comando para listar seus containers Docker ativos e anote o nome ou ID do container que executa o PHP (ex: `wp_php`):
+```bash
+sudo docker ps
+```
+
+*Exemplo de saída:*
+```text
+CONTAINER ID   IMAGE                  PORTS                  NAMES
+0d6823160cb5   nginx:alpine           0.0.0.0:8080->80/tcp   wp_nginx
+bccefc10d996   wordpress:php8.2-fpm   9000/tcp               wp_php
+c85c280bb760   mysql:8.0              3306/tcp               wp_mysql
+```
+
+#### 2. Configurar o `config/experiment.env`
+Ajuste as variáveis do arquivo `config/experiment.env`:
+```env
+# Endereço e porta expostos no Host pelo container Web (ex: Nginx / Apache)
+BASE_URL=http://127.0.0.1:8080
+
+# Tipo de carga e credenciais do WordPress para teste de Login/Logout
+WORKLOAD=wordpress
+WP_USER=marcos
+WP_PASS=Teste1234
+
+# Filtro de processos para capturar PHP + Banco de Dados no Scaphandre
+SCAPHANDRE_PROCESS_REGEX="(php|mysqld|mariadbd|apache2)"
+```
+
+#### 3. Executar a Medição Docker
+Execute o script dedicado [`measurement/run-wordpress-docker.sh`](file:///home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/measurement/run-wordpress-docker.sh) passando o nome do seu container PHP como argumento:
+
+```bash
+./measurement/run-wordpress-docker.sh wp_php
+```
+
+#### 4. Relatórios e Resultados Gerados
+Ao final da medição, os resultados estarão salvos no diretório `results/wordpress-docker-YYYYMMDD-HHMMSS/`:
+- **`SUMMARY.md`**: Relatório em Markdown consolidando Joules totais, emissões de $\text{CO}_2$ e número de chamadas/amostras por função.
+- **`energy-flamegraph.svg`**: Flamegraph visual dos *hotspots* de energia atribuídos por pilha de chamadas.
+- **`cpu-flamegraph.svg`**: Flamegraph do uso de CPU.
+- **`top-functions.csv`**: Tabela CSV ranqueando funções por consumo de energia em Joules e porcentagem.
+- **`function-times.csv`**: Tabela CSV detalhada com tempos totais, médios e contagem de amostras (*samples*) por função.
+
+---
+
 ## ⚙️ Configuração do Experimento (`config/experiment.env`)
 
 O arquivo `config/experiment.env` centraliza todas as variáveis do teste:
@@ -268,6 +328,7 @@ green-php-lab-meter-ready/
 │   ├── install-tools-ubuntu.sh # Script de instalação automática de dependências
 │   ├── check-environment.sh    # Script de validação de ambiente (RAPL, PHP, ferramentas)
 │   ├── run-experiment.sh       # Executa o experimento para uma única versão (slow/fast)
+│   ├── run-wordpress-docker.sh # Executa o experimento em container Docker (ex: WordPress)
 │   ├── run-comparison.sh       # Executa o ciclo completo de comparação (slow + fast)
 │   ├── analyze_measurement.py  # Engine em Python de integração e atribuição de energia
 │   ├── compare_runs.py         # Script que gera o relatório comparativo COMPARISON.md
