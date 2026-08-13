@@ -28,7 +28,7 @@ def parse_jfr(path: Path, target_pid: int) -> list[StackSample]:
         frames = event["values"]["stackTrace"]["frames"]
         stack = tuple(
             f"{frame['method']['type']['name']}.{frame['method']['name']}"
-            for frame in frames
+            for frame in reversed (frames)
         )
 
         samples.append(StackSample(timestamp, target_pid, stack))
