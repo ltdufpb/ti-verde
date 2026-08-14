@@ -382,6 +382,7 @@ def main() -> None:
     parser.add_argument("--phpspy", type=Path)
     parser.add_argument("--pyspy", type=Path)
     parser.add_argument("--jfr", type=Path)
+    parser.add_argument("--application-prefix", type=str, default=None)
     parser.add_argument("--start-time", type=float)
     parser.add_argument("--baseline", type=Path)
     parser.add_argument("--window", type=Path)
@@ -465,6 +466,15 @@ def main() -> None:
         unattributed_uj,
         unattributed_time_s,
     ) = attribute_energy_to_stacks(process_points, samples, target_pid)
+
+    if args.application_prefix:
+        from application_scope import summarize_by_scope
+
+        prefixes = (args.application_prefix,)
+        self_energy = summarize_by_scope(self_energy, prefixes)
+        inclusive_energy = summarize_by_scope(inclusive_energy, prefixes)
+        self_time = summarize_by_scope(self_time, prefixes)
+        inclusive_time = summarize_by_scope(inclusive_time, prefixes)
 
     energy_folded = output_dir / "energy.folded"
     cpu_folded = output_dir / "cpu.folded"
@@ -616,19 +626,20 @@ def main() -> None:
             "intensity_g_co2e_per_kwh": intensity,
             "host_total_g_co2e": carbon_g(host_j, intensity),
             "host_dynamic_g_co2e": carbon_g(host_dynamic_j, intensity),
-            "php_process_total_g_co2e": carbon_g(php_j, intensity),
-            "php_process_dynamic_g_co2e": carbon_g(php_dynamic_j, intensity),
+            "process_total_g_co2e": carbon_g(process_j, intensity),
+            "process_dynamic_g_co2e": carbon_g(process_dynamic_j, intensity),
             "host_total_g_co2e_per_1000_successful_requests": safe_divide(
                 carbon_g(host_j, intensity) * 1000,
                 successful,
             ),
-            "php_total_g_co2e_per_1000_successful_requests": safe_divide(
-                carbon_g(php_j, intensity) * 1000,
+            "process_total_g_co2e_per_1000_successful_requests": safe_divide(
+                carbon_g(process_j, intensity) * 1000,
                 successful,
             ),
         },
         "profiling": {
-            "phpspy_samples_in_file": len(samples),
+            "samples_in_file": len(samples),
+            "application_prefix": args.application_prefix,
             "energy_stacks": len(energy_stacks),
             "cpu_stacks": len(cpu_stacks),
             "energy_flamegraph": "energy-flamegraph.svg",
