@@ -15,9 +15,10 @@ TARGET_PID="${1:-}"
 LANGUAGE="${2:-}"
 K6_SCRIPT="${3:-}"
 APPLICATION_PREFIX="${4:-}"
+PROJECT_ROOT="${5:-}"
 
 if [[ -z "$TARGET_PID" || -z "$LANGUAGE" ]]; then
-  echo "Usage: $0 <pid> <php|python|java> [k6-script.js] [application-prefix]" >&2
+  echo "Usage: $0 <pid> <php|python|java> [k6-script.js] [application-prefix] [project-root]" >&2
   exit 1
 fi
 
@@ -146,14 +147,16 @@ case "$LANGUAGE" in
     PROFILER_PID=$!
     ;;
   python)
-    PYSPY_FILE="$RUN_DIR/profile.speedscope.json"
+    PYSPY_FILE="$RUN_DIR/profile.chrometrace.json"
     PYSPY_ERR="$RUN_DIR/pyspy.stderr.log"
     echo "Starting py-spy..."
     PYSPY_START_TIME="$(python3 -c 'import time; print(time.time())')"
     sudo "$PYSPY" record \
       --pid "$TARGET_PID" \
       --duration "$COLLECTOR_TIMEOUT" \
-      --format speedscope \
+      --format chrometrace \
+      --idle \
+      --rate "${PYSPY_RATE_HZ:-100}" \
       --output "$PYSPY_FILE" \
       2>"$PYSPY_ERR" &
     PROFILER_PID=$!
@@ -223,7 +226,7 @@ ANALYZE_ARGS=(
 
 case "$LANGUAGE" in
   php)    ANALYZE_ARGS+=(--phpspy "$PHPSPY_FILE") ;;
-  python) ANALYZE_ARGS+=(--pyspy "$PYSPY_FILE" --start-time "$PYSPY_START_TIME") ;;
+  python) ANALYZE_ARGS+=(--pyspy "$PYSPY_FILE" --start-time "$PYSPY_START_TIME" --pyspy-rate "${PYSPY_RATE_HZ:-100}") ;;
   java)   ANALYZE_ARGS+=(--jfr "$JFR_FILE") ;;
 esac
 
@@ -233,6 +236,10 @@ fi
 
 if [[ -n "$APPLICATION_PREFIX" ]]; then
   ANALYZE_ARGS+=(--application-prefix "$APPLICATION_PREFIX")
+fi
+
+if [[ -n "$PROJECT_ROOT" ]]; then
+  ANALYZE_ARGS+=(--project-root "$PROJECT_ROOT")
 fi
 
 python3 "$PROJECT_DIR/measurement/analyze_measurement.py" \

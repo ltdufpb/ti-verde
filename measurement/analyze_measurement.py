@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
+from frame_naming import qualify_frame_name
 
 @dataclass(frozen=True)
 class PowerPoint:
@@ -208,7 +209,7 @@ def clean_frame_name(name: str) -> str:
     return name.strip().replace(";", ":") or "<unknown>"
 
 
-def parse_phpspy(path: Path) -> list[StackSample]:
+def parse_phpspy(path: Path, project_root: Path | None = None) -> list[StackSample]:
     samples: list[StackSample] = []
     frames: list[tuple[int, str]] = []
     timestamp: float | None = None
@@ -236,7 +237,10 @@ def parse_phpspy(path: Path) -> list[StackSample]:
 
         match = FRAME_RE.match(line)
         if match:
-            frames.append((int(match.group(1)), match.group(2)))
+            depth = int(match.group(1))
+            name = match.group(2)
+            filename = match.group(3)
+            frames.append((depth, qualify_frame_name(name, filename, project_root)))
             continue
 
         match = TRACE_TS_RE.match(line)
@@ -383,7 +387,9 @@ def main() -> None:
     parser.add_argument("--pyspy", type=Path)
     parser.add_argument("--jfr", type=Path)
     parser.add_argument("--application-prefix", type=str, default=None)
+    parser.add_argument("--project-root", type=Path, default=None)
     parser.add_argument("--start-time", type=float)
+    parser.add_argument("--pyspy-rate", type=float, default=100.0)
     parser.add_argument("--baseline", type=Path)
     parser.add_argument("--window", type=Path)
     parser.add_argument("--k6", type=Path)
@@ -454,9 +460,11 @@ def main() -> None:
         samples = parse_jfr(args.jfr, target_pid)
     elif args.pyspy:
         from pyspy_parser import parse_pyspy
-        samples = parse_pyspy(args.pyspy, target_pid, args.start_time)
+        samples = parse_pyspy(
+            args.pyspy, target_pid, args.start_time, args.pyspy_rate, args.project_root
+        )
     else:
-        samples = parse_phpspy(args.phpspy)
+        samples = parse_phpspy(args.phpspy, args.project_root)
     (
         energy_stacks,
         cpu_stacks,
