@@ -13,9 +13,11 @@ source "$CONFIG_FILE"
 
 TARGET_PID="${1:-}"
 LANGUAGE="${2:-}"
+K6_SCRIPT="${3:-}"
+APPLICATION_PREFIX="${4:-}"
 
 if [[ -z "$TARGET_PID" || -z "$LANGUAGE" ]]; then
-  echo "Usage: $0 <pid> <php|python|java>" >&2
+  echo "Usage: $0 <pid> <php|python|java> [k6-script.js] [application-prefix]" >&2
   exit 1
 fi
 
@@ -26,6 +28,11 @@ case "$LANGUAGE" in
     exit 1
     ;;
 esac
+
+if [[ -n "$K6_SCRIPT" && ! -f "$K6_SCRIPT" ]]; then
+  echo "K6 script not found: $K6_SCRIPT" >&2
+  exit 1
+fi
 
 kill -0 "$TARGET_PID" 2>/dev/null || {
   echo "Process $TARGET_PID not found or not running." >&2
@@ -44,6 +51,7 @@ RUN_DIR="$(cd "$RUN_DIR" && pwd)"
 FLAMEGRAPH="$PROJECT_DIR/tools/FlameGraph/flamegraph.pl"
 SCAPH_FILE="$RUN_DIR/scaphandre.json"
 WINDOW_FILE="$RUN_DIR/window.json"
+K6_SUMMARY_FILE="$RUN_DIR/k6-summary.json"
 
 cp "$CONFIG_FILE" "$RUN_DIR/experiment.env"
 
@@ -53,6 +61,7 @@ case "$LANGUAGE" in
   python) REQUIRED_COMMANDS+=(py-spy) ;;
   java)   REQUIRED_COMMANDS+=(jfr) ;;
 esac
+[[ -n "$K6_SCRIPT" ]] && REQUIRED_COMMANDS+=(k6)
 
 for command in "${REQUIRED_COMMANDS[@]}"; do
   command -v "$command" >/dev/null 2>&1 || {
@@ -166,8 +175,17 @@ sleep "$COLLECTOR_LEAD_SECONDS"
 
 START_TS="$(python3 -c 'import time; print(time.time())')"
 
-echo "Measuring for ${DURATION_SECONDS}s..."
-sleep "$DURATION_SECONDS"
+if [[ -n "$K6_SCRIPT" ]]; then
+  echo "Generating traffic with k6..."
+  SUMMARY_PATH="$K6_SUMMARY_FILE" \
+  BASE_URL="${BASE_URL:-http://localhost:8080}" \
+  DURATION_SECONDS="$DURATION_SECONDS" \
+  RATE="${RATE:-2}" \
+  k6 run "$K6_SCRIPT"
+else
+  echo "Measuring for ${DURATION_SECONDS}s..."
+  sleep "$DURATION_SECONDS"
+fi
 
 END_TS="$(python3 -c 'import time; print(time.time())')"
 
@@ -208,6 +226,14 @@ case "$LANGUAGE" in
   python) ANALYZE_ARGS+=(--pyspy "$PYSPY_FILE" --start-time "$PYSPY_START_TIME") ;;
   java)   ANALYZE_ARGS+=(--jfr "$JFR_FILE") ;;
 esac
+
+if [[ -f "$K6_SUMMARY_FILE" ]]; then
+  ANALYZE_ARGS+=(--k6 "$K6_SUMMARY_FILE")
+fi
+
+if [[ -n "$APPLICATION_PREFIX" ]]; then
+  ANALYZE_ARGS+=(--application-prefix "$APPLICATION_PREFIX")
+fi
 
 python3 "$PROJECT_DIR/measurement/analyze_measurement.py" \
   "${ANALYZE_ARGS[@]}" \
