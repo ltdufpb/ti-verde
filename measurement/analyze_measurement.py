@@ -302,7 +302,7 @@ def attribute_energy_to_stacks(
         if not interval_samples:
             unattributed_energy += interval_energy
             unattributed_time += dt
-            energy_by_stack[("[unattributed: no PHP stack sample]",)] += interval_energy
+            energy_by_stack[("[unattributed: no stack sample]",)] += interval_energy
             continue
 
         energy_per_sample = interval_energy / len(interval_samples)
@@ -417,6 +417,7 @@ def main() -> None:
     end = float(window["end_timestamp"])
     target_pid = int(args.target_pid or window["target_pid"])
     duration = end - start
+    language = window.get("language", "process").upper()
 
     reports = read_concatenated_json(args.scaphandre)
     host_all, process_all = extract_scaphandre_series(reports, target_pid)
@@ -427,7 +428,7 @@ def main() -> None:
         raise ValueError("Not enough host samples around the measurement window.")
     if len(process_points) < 2:
         raise ValueError(
-            f"Not enough PHP PID {target_pid} samples. Check process filtering."
+            f"Not enough {language} PID {target_pid} samples. Check process filtering."
         )
 
     host_energy_uj = integrate_microjoules(host_points)
@@ -486,14 +487,14 @@ def main() -> None:
             args.flamegraph_script,
             energy_folded,
             output_dir / "energy-flamegraph.svg",
-            "PHP energy-attributed hotspots",
+            f"{language} energy-attributed hotspots",
             "microjoules",
         )
         generate_svg(
             args.flamegraph_script,
             cpu_folded,
             output_dir / "cpu-flamegraph.svg",
-            "PHP sampled execution hotspots",
+            f"{language} sampled execution hotspots",
             "samples",
         )
 
@@ -557,9 +558,9 @@ def main() -> None:
         writer.writerow([
             "function",
             "self_energy_j",
-            "self_energy_percent_of_php",
+            "self_energy_percent_of_process",
             "inclusive_energy_j",
-            "inclusive_energy_percent_of_php",
+            "inclusive_energy_percent_of_process",
             "self_time_s",
             "avg_self_time_ms",
             "inclusive_time_s",
@@ -585,9 +586,9 @@ def main() -> None:
             ])
 
     host_j = host_energy_uj / 1_000_000.0
-    php_j = process_energy_uj / 1_000_000.0
+    process_j = process_energy_uj / 1_000_000.0
     host_dynamic_j = dynamic_host_uj / 1_000_000.0
-    php_dynamic_j = dynamic_process_uj / 1_000_000.0
+    process_dynamic_j = dynamic_process_uj / 1_000_000.0
 
     summary = {
         "measurement_window": {
@@ -595,19 +596,20 @@ def main() -> None:
             "end_timestamp": end,
             "duration_seconds": duration,
             "target_pid": target_pid,
+            "language": language,
         },
         "workload": k6,
         "energy": {
             "host_total_j": host_j,
             "host_dynamic_j": host_dynamic_j,
-            "php_process_total_j": php_j,
-            "php_process_dynamic_j": php_dynamic_j,
+            "process_total_j": process_j,
+            "process_dynamic_j": process_dynamic_j,
             "host_average_power_w": host_j / duration,
-            "php_average_power_w": php_j / duration,
+            "process_average_power_w": process_j / duration,
             "baseline_host_average_power_w": baseline_host_uw / 1_000_000.0,
-            "baseline_php_average_power_w": baseline_process_uw / 1_000_000.0,
-            "php_attribution_unattributed_j": unattributed_uj / 1_000_000.0,
-            "php_attribution_unattributed_percent": safe_divide(
+            "baseline_process_average_power_w": baseline_process_uw / 1_000_000.0,
+            "process_attribution_unattributed_j": unattributed_uj / 1_000_000.0,
+            "process_attribution_unattributed_percent": safe_divide(
                 unattributed_uj * 100,
                 process_energy_uj,
             ),
@@ -616,9 +618,9 @@ def main() -> None:
                 host_dynamic_j,
                 successful,
             ),
-            "php_j_per_successful_request": safe_divide(php_j, successful),
-            "php_dynamic_j_per_successful_request": safe_divide(
-                php_dynamic_j,
+            "process_j_per_successful_request": safe_divide(process_j, successful),
+            "process_dynamic_j_per_successful_request": safe_divide(
+                process_dynamic_j,
                 successful,
             ),
         },
@@ -649,10 +651,9 @@ def main() -> None:
         },
         "function_times": function_times_list,
         "interpretation_notes": [
-            "Scaphandre process power is attributed using hardware power and process CPU time.",
-            "The energy flamegraph correlates process-power intervals with phpspy samples.",
+            "Process power is attributed using hardware power and process CPU time.",
+            "The energy flamegraph correlates process-power intervals with stack samples.",
             "Host energy includes every process active during the measurement.",
-            "Local k6 energy is included in host energy, but not in PHP process energy.",
             "Carbon values are estimated operational emissions.",
         ],
     }
@@ -669,7 +670,7 @@ def main() -> None:
                 break
             top_rows.append(row)
 
-    php_per_request = safe_divide(php_j, successful) or 0.0
+    process_per_request = safe_divide(process_j, successful) or 0.0
     lines = [
         "# Measurement summary",
         "",
@@ -677,17 +678,26 @@ def main() -> None:
         f"- Successful requests: **{successful}**",
         f"- Host total energy: **{host_j:.6f} J**",
         f"- Host dynamic energy: **{host_dynamic_j:.6f} J**",
-        f"- PHP process total energy: **{php_j:.6f} J**",
-        f"- PHP process dynamic energy: **{php_dynamic_j:.6f} J**",
-        f"- PHP energy/request: **{php_per_request:.9f} J/request**",
-        f"- Estimated PHP emissions: **{carbon_g(php_j, intensity):.12f} gCO2e**",
-        f"- Unattributed PHP energy: **{unattributed_uj / 1_000_000:.6f} J**",
+        f"- {language} process total energy: **{process_j:.6f} J**",
+        f"- {language} process dynamic energy: **{process_dynamic_j:.6f} J**",
+        f"- {language} energy/request: **{process_per_request:.9f} J/request**",
+        f"- Estimated {language} emissions: **{carbon_g(process_j, intensity):.12f} gCO2e**",
+        f"- Unattributed {language} energy: **{unattributed_uj / 1_000_000:.6f} J**",
+    ]
+
+    if args.application_prefix:
+        lines.append(
+            f"- Note: results filtered to functions matching `{args.application_prefix}`; "
+            "framework/infrastructure functions were excluded from the tables below."
+        )
+
+    lines.extend([
         "",
         "## Top sampled self-energy functions",
         "",
         "| Function | Self energy (J) | Inclusive energy (J) |",
         "|---|---:|---:|",
-    ]
+    ])
 
     for row in top_rows:
         lines.append(
