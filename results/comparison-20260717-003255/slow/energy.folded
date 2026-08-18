@@ -1,9 +1,0 @@
-<main>;executeMixedWorkload;executeTextWorkload;countWordsSlow 5945289
-<main>;executeMixedWorkload;executeCpuWorkload;calculatePrimeChecksumSlow;isPrimeSlow 1186442
-<main>;executeMixedWorkload;executeTextWorkload;countWordsSlow;array_unique 131311
-array_values 130671
-<main>;executeMixedWorkload;executeTextWorkload;countWordsSlow;normalizeSentence;preg_replace;array_filter;{closure:normalizeSentence():131} 55563
-<main>;executeMixedWorkload;executeTextWorkload;countWordsSlow;ksort 53227
-<main>;memory_get_usage;hash;textChecksum;hash 52720
-[unattributed: no PHP stack sample] 51603
-<main>;executeMixedWorkload;executeTextWorkload;calculatePrimeChecksumSlow;isPrimeSlow 47182

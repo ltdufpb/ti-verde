@@ -16,10 +16,14 @@ if grep -qiE 'microsoft|wsl' /proc/version 2>/dev/null; then
   fail "WSL detected. Use native Linux on the physical computer."
 fi
 
-for command in php curl python3 k6 scaphandre perl; do
+for command in php curl python3 scaphandre perl; do
   command -v "$command" >/dev/null 2>&1 ||
     fail "Missing command: $command. Run measurement/install-tools-ubuntu.sh."
 done
+
+if ! command -v k6 >/dev/null 2>&1; then
+  echo "INFO: 'k6' não está instalado localmente. (Necessário apenas para executar testes de carga locais via run-load-test.sh)"
+fi
 
 [[ -x "$PROJECT_DIR/tools/phpspy/phpspy" ]] ||
   fail "phpspy is not built."
@@ -61,6 +65,6 @@ python3 "$PROJECT_DIR/measurement/analyze_measurement.py" \
 echo
 echo "Environment is ready."
 echo "PHP:        $(php -v | head -n 1)"
-echo "k6:         $(k6 version | head -n 1)"
+echo "k6:         $(k6 version 2>/dev/null | head -n 1 || echo 'não instalado (opcional no host de medição)')"
 echo "Scaphandre: $(scaphandre --version 2>/dev/null || echo installed)"
 echo "phpspy:     $("$PROJECT_DIR/tools/phpspy/phpspy" -v 2>/dev/null || echo built)"

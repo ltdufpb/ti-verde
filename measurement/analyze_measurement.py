@@ -479,7 +479,7 @@ def main() -> None:
             "samples",
         )
 
-    k6 = load_json(args.k6)
+    k6 = load_json(args.k6) if args.k6 and args.k6.exists() else {}
     successful = int(k6.get("successful_requests", 0) or 0)
     intensity = max(0.0, float(args.carbon_intensity))
 
@@ -665,17 +665,20 @@ def main() -> None:
                 break
             top_rows.append(row)
 
-    php_per_request = safe_divide(php_j, successful) or 0.0
+    php_per_request = safe_divide(php_j, successful)
+    php_per_request_str = f"**{php_per_request:.9f} J/request**" if php_per_request is not None else "*N/A (carga separada)*"
+    successful_str = f"**{successful}**" if successful > 0 else "*N/A (teste de carga executado separadamente)*"
+
     lines = [
         "# Measurement summary",
         "",
         f"- Duration: **{duration:.3f} s**",
-        f"- Successful requests: **{successful}**",
+        f"- Successful requests: {successful_str}",
         f"- Host total energy: **{host_j:.6f} J**",
         f"- Host dynamic energy: **{host_dynamic_j:.6f} J**",
         f"- PHP process total energy: **{php_j:.6f} J**",
         f"- PHP process dynamic energy: **{php_dynamic_j:.6f} J**",
-        f"- PHP energy/request: **{php_per_request:.9f} J/request**",
+        f"- PHP energy/request: {php_per_request_str}",
         f"- Estimated PHP emissions: **{carbon_g(php_j, intensity):.12f} gCO2e**",
         f"- Unattributed PHP energy: **{unattributed_uj / 1_000_000:.6f} J**",
         "",

@@ -1,8 +1,0 @@
-<main>;executeMixedWorkload;executeTextWorkload;countWordsSlow 111
-<main>;executeMixedWorkload;executeCpuWorkload;calculatePrimeChecksumSlow;isPrimeSlow 29
-array_values 3
-<main>;executeMixedWorkload;executeTextWorkload;countWordsSlow;array_unique 2
-<main>;memory_get_usage;hash;textChecksum;hash 1
-<main>;executeMixedWorkload;executeTextWorkload;countWordsSlow;normalizeSentence;preg_replace;array_filter;{closure:normalizeSentence():131} 1
-<main>;executeMixedWorkload;executeTextWorkload;countWordsSlow;ksort 1
-<main>;executeMixedWorkload;executeTextWorkload;calculatePrimeChecksumSlow;isPrimeSlow 1

@@ -124,8 +124,9 @@ if [[ ! -d "$TOOLS_DIR/FlameGraph/.git" ]]; then
   git clone https://github.com/brendangregg/FlameGraph.git "$TOOLS_DIR/FlameGraph"
 fi
 
+chmod +x "$PROJECT_DIR"/*.sh 2>/dev/null || true
 chmod +x "$PROJECT_DIR"/measurement/*.sh
-chmod +x "$PROJECT_DIR"/scripts/*.sh
+chmod +x "$PROJECT_DIR"/scripts/*.sh 2>/dev/null || true
 chmod +x "$PROJECT_DIR"/carbon.py
 
 echo

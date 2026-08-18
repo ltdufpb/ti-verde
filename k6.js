@@ -7,7 +7,6 @@ const failedRequests = new Counter("failed_requests");
 
 const baseUrl = __ENV.BASE_URL || "http://127.0.0.1:8080";
 const workload = __ENV.WORKLOAD || "wordpress";
-const implementation = __ENV.IMPLEMENTATION || "slow";
 const scale = __ENV.SCALE || "1";
 const rate = Number(__ENV.RATE || 2);
 const durationSeconds = Number(__ENV.DURATION_SECONDS || 60);
@@ -43,7 +42,7 @@ export default function () {
     // 1. Acessa a página de login
     http.get(`${baseUrl}/wp-login.php`);
 
-    // 2. Realiza o login via POST (marcos / Teste1234)
+    // 2. Realiza o login via POST
     const loginPayload = {
       log: wpUser,
       pwd: wpPass,
@@ -90,11 +89,10 @@ export default function () {
       "painel admin acessível": () => adminOk,
     });
   } else {
-    // Workloads padrão de benchmarks sintéticos (cpu, text, mixed)
+    // Workloads sintéticos (cpu, text, mixed)
     const url =
       `${baseUrl}/work` +
       `?workload=${encodeURIComponent(workload)}` +
-      `&implementation=${encodeURIComponent(implementation)}` +
       `&scale=${encodeURIComponent(scale)}`;
 
     const response = http.get(url);
@@ -118,7 +116,6 @@ function metricValue(data, metric, field, fallback = 0) {
 
 export function handleSummary(data) {
   const summary = {
-    implementation,
     workload,
     scale: Number(scale),
     rate_requests_per_second: rate,
@@ -139,7 +136,7 @@ export function handleSummary(data) {
   };
 
   const text =
-    `k6 completed: implementation=${implementation}, ` +
+    `k6 completed: workload=${workload}, ` +
     `requests=${summary.http_requests}, successful=${summary.successful_requests}, ` +
     `dropped=${summary.dropped_iterations}, p95=${summary.request_duration_ms.p95} ms\n`;
 

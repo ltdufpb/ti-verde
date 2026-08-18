@@ -1,5 +1,0 @@
-function,self_energy_j,self_energy_percent_of_php,inclusive_energy_j,inclusive_energy_percent_of_php,self_time_s,avg_self_time_ms,inclusive_time_s,avg_inclusive_time_ms
-wpApplyFiltersFast,0.0,0.0,0.0,0.0,0.0,0.0,1.0781002044677734,8.98416837056478
-<main>,0.0,0.0,0.0,0.0,0.0,0.0,1.0781002044677734,8.98416837056478
-hash,0.0,0.0,0.0,0.0,1.0781002044677734,8.98416837056478,1.0781002044677734,8.98416837056478
-executeWordpressWorkload,0.0,0.0,0.0,0.0,0.0,0.0,1.0781002044677734,8.98416837056478

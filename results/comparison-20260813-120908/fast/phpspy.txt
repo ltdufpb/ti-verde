@@ -1,7 +1,0 @@
-0 hash <internal>:-1
-1 wpApplyFiltersFast /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:289
-2 executeWordpressWorkload /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:303
-3 <main> /home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/public/index.php:1
-# trace_ts = 1786633957.918532
-# pid = 90735
-
