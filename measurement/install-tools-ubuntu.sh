@@ -31,7 +31,11 @@ sudo apt-get install -y \
   perl \
   php-cli \
   python3 \
+  python3-pip \
   wget
+
+echo "Installing py-spy..."
+pip install py-spy --break-system-packages
 
 echo "Installing k6..."
 curl -fsSL https://dl.k6.io/key.gpg |
@@ -122,6 +126,26 @@ make -C "$TOOLS_DIR/phpspy"
 if [[ ! -d "$TOOLS_DIR/FlameGraph/.git" ]]; then
   rm -rf "$TOOLS_DIR/FlameGraph"
   git clone https://github.com/brendangregg/FlameGraph.git "$TOOLS_DIR/FlameGraph"
+fi
+
+echo "Installing async-profiler..."
+ASPROF_VERSION="4.4"
+if [[ ! -x "$TOOLS_DIR/async-profiler/bin/asprof" ]]; then
+  rm -rf "$TOOLS_DIR/async-profiler"
+  case "$(uname -m)" in
+    x86_64) asprof_arch="linux-x64" ;;
+    aarch64) asprof_arch="linux-arm64" ;;
+    *)
+      echo "No async-profiler package for architecture: $(uname -m)" >&2
+      exit 1
+      ;;
+  esac
+  curl -fL \
+    "https://github.com/async-profiler/async-profiler/releases/download/v${ASPROF_VERSION}/async-profiler-${ASPROF_VERSION}-${asprof_arch}.tar.gz" \
+    -o /tmp/async-profiler.tar.gz
+  mkdir -p "$TOOLS_DIR/async-profiler"
+  tar -xzf /tmp/async-profiler.tar.gz -C "$TOOLS_DIR/async-profiler" --strip-components=1
+  rm -f /tmp/async-profiler.tar.gz
 fi
 
 chmod +x "$PROJECT_DIR"/*.sh 2>/dev/null || true
