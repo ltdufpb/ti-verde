@@ -1,7 +1,0 @@
-[unattributed: no PHP stack sample] 516462
-<main>;executeMixedWorkload;executeTextWorkload;countWordsFast 47638
-<main>;executeMixedWorkload;executeCpuWorkload;calculatePrimeChecksumFast;isPrimeFast 23851
-<main>;executeMixedWorkload;executeTextWorkload;countWordsFast;normalizeSentence;preg_replace 23621
-<main>;executeMixedWorkload;executeTextWorkload;countWordsFast;ksort 23310
-<main>;executeMixedWorkload;executeCpuWorkload;calculatePrimeChecksumFast 11460
-<main>;executeMixedWorkload;executeTextWorkload;countWordsFast;normalizeSentence;array_values 11460

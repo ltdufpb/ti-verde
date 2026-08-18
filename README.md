@@ -1,22 +1,23 @@
-# Green PHP Lab — Scaphandre + phpspy
+# Green Energy Lab — Medidor Multi-Linguagem de Energia e Performance
 
-O **Green PHP Lab** é um ambiente completo de medição, perfilamento e atribuição de consumo energético e emissões de carbono para aplicações PHP em sistemas Linux.
+O **Green Energy Lab** é uma ferramenta de perfilamento e medição de consumo energético e emissões de carbono para aplicações de software em sistemas Linux nativos.
 
-Ele integra medição de hardware via contadores RAPL (**Scaphandre**), amostragem de pilhas de execução em tempo de execução (**phpspy**), geração de perfil visual (**FlameGraph**), testes de carga reprodutíveis a uma taxa constante de requisições (**k6**) e um analisador estatístico em Python (`analyze_measurement.py`) que correlaciona o consumo elétrico com o código executado.
+Ele integra medição direta de hardware via contadores Intel/AMD RAPL (**Scaphandre**), perfilamento de pilhas de chamadas em tempo de execução (**phpspy** para PHP, e extensível para Java e Python), geração de perfil visual (**FlameGraph**), testes de carga desacoplados (**k6**) e um analisador estatístico em Python (`analyze_measurement.py`) que correlaciona o consumo elétrico com o código executado.
 
 ---
 
 ## 📋 Sumário
 1. [Requisito Fundamental](#-requisito-fundamental)
-2. [Arquitetura e Fluxo de Funcionamento](#-arquitetura-e-fluxo-de-funcionamento)
-3. [Principais Funcionalidades](#-principais-funcionalidades)
-4. [Como Funciona em Detalhes](#-como-funciona-em-detalhes)
-5. [Guia de Início Rápido (Quickstart)](#-guia-de-início-rápido-quickstart)
-6. [Configuração do Experimento](#-configuração-do-experimento)
-7. [Estrutura dos Arquivos de Resultado](#-estrutura-dos-arquivos-de-resultado)
-8. [Estrutura do Repositório](#-estrutura-do-repositório)
-9. [Calculadora de Carbono (`carbon.py`)](#-calculadora-de-carbono-carbonpy)
-10. [Limitações de Interpretação e Boas Práticas](#-limitações-de-interpretação-e-boas-práticas)
+2. [Arquitetura e Fluxo Desacoplado](#-arquitetura-e-fluxo-desacoplado)
+3. [Pronto para Fusão Multi-Linguagem (PHP, Java, Python)](#-pronto-para-fusão-multi-linguagem-php-java-python)
+4. [Guia de Início Rápido (Quickstart)](#-guia-de-início-rápido-quickstart)
+5. [Modos de Execução do Medidor (`run-meter.sh`)](#-modos-de-execução-do-medidor-run-metersh)
+6. [Execução Separada do Teste de Carga (`run-load-test.sh`)](#-execução-separada-do-teste-de-carga-run-load-testsh)
+7. [Painel Visual Interativo](#-painel-visual-interativo)
+8. [Configuração (`config/experiment.env`)](#-configuração-configexperimentenv)
+9. [Estrutura do Repositório](#-estrutura-do-repositório)
+10. [Calculadora de Carbono (`carbon.py`)](#-calculadora-de-carbono-carbonpy)
+11. [Boas Práticas de Medição](#-boas-práticas-de-medição)
 
 ---
 
@@ -25,17 +26,17 @@ Ele integra medição de hardware via contadores RAPL (**Scaphandre**), amostrag
 > [!IMPORTANT]
 > **Use Linux nativo instalado no computador físico.**
 > 
-> **Não use WSL (Windows Subsystem for Linux) nem Máquinas Virtuais comuns** para realizar as medições reais de energia. O Scaphandre depende das interfaces RAPL (Running Average Power Limit) fornecidas pelo kernel Linux (`/sys/class/powercap`), que normalmente **não são expostas** por hipervisores ou pelo WSL.
+> **Não use WSL nem Máquinas Virtuais comuns** para realizar as medições reais de energia. O Scaphandre depende das interfaces RAPL (Running Average Power Limit) fornecidas pelo kernel Linux (`/sys/class/powercap`), que normalmente **não são expostas** por hipervisores ou pelo WSL.
 
-Além do Linux nativo:
-- O PHP deve ser compilado **sem Thread Safety (Non-ZTS)** para compatibilidade com o `phpspy`.
-- É necessário ter privilégios de **`sudo`** para acessar os contadores de hardware RAPL e ler a memória de processos via `process_vm_readv`.
+Requisitos adicionais:
+- Privilégios de **`sudo`** para acessar os contadores de hardware RAPL e ler memória de processos via `process_vm_readv`.
+- Para PHP: PHP compilado **sem Thread Safety (Non-ZTS)** para compatibilidade com o profiler `phpspy`.
 
 ---
 
-## 🏗 Arquitetura e Fluxo de Funcionamento
+## 🏗 Arquitetura e Fluxo Desacoplado
 
-O diagrama abaixo ilustra a integração de todos os componentes durante uma medição:
+O sistema adota uma separação estrita de responsabilidades: **Medição** e **Geração de Carga** são processos totalmente independentes. Isso permite executar o gerador de tráfego HTTP (`k6`) em um computador ou terminal separado, garantindo que o consumo de CPU do `k6` não interfira nas leituras de energia do servidor sob teste.
 
 ```mermaid
 flowchart TD
@@ -43,211 +44,193 @@ flowchart TD
         ENV[config/experiment.env]
     end
 
-    subgraph Aplicação PHP
-        SRV[Servidor PHP HTTP\npublic/index.php]
+    subgraph Host de Medição
+        METER[run-meter.sh\nEntrypoint do Medidor]
+        SCAPH[Scaphandre\nLeitura de Watts RAPL]
+        PROF[Profiler da Linguagem\nphpspy / async-profiler / py-spy]
+        APP[Aplicação Alvo\nLocal / Container Docker / Processo PID]
+        ANZ[analyze_measurement.py\nAtribuição Energética]
+        FG[FlameGraph.pl\nGerador SVG]
     end
 
-    subgraph Gerador de Carga
-        K6[k6 Workload Engine\nk6.js]
+    subgraph Gerador de Carga Separado
+        K6[run-load-test.sh\nk6 Workload Engine]
     end
 
-    subgraph Coletores de Métricas
-        SCAPH[Scaphandre\nMedição de Watts RAPL]
-        SPY[phpspy\nAmostragem de Call-Stacks]
-    end
-
-    subgraph Pipeline de Análise
-        ANZ[analyze_measurement.py\nIntegração, Atribuição e Emissões]
-        FG[FlameGraph.pl\nRenderizador SVG]
-        CMP[compare_runs.py\nComparador Slow vs Fast]
-    end
-
-    ENV --> SRV & K6 & SCAPH & SPY
-    SRV <-->|Requisições HTTP| K6
+    ENV --> METER & K6
+    METER --> APP & SCAPH & PROF
+    K6 -.->|Requisições HTTP| APP
     SCAPH -->|scaphandre.json\nMicrowatts / Tempo| ANZ
-    SPY -->|phpspy.txt\nStack Traces + Timestamps| ANZ
-    K6 -->|k6-summary.json\nLatências / Throughput| ANZ
-    ANZ -->|Stacks Formatados| FG
-    FG -->|SVG| OUT1[cpu-flamegraph.svg]
-    FG -->|SVG| OUT2[energy-flamegraph.svg]
+    PROF -->|phpspy.txt\nCall Stacks + Timestamps| ANZ
+    K6 -.->|k6-summary.json (opcional)| ANZ
+    ANZ --> FG
+    FG --> OUT1[cpu-flamegraph.svg]
+    FG --> OUT2[energy-flamegraph.svg]
     ANZ --> OUT3[SUMMARY.md & summary.json]
     ANZ --> OUT4[top-functions.csv & function-times.csv]
-    OUT3 --> CMP
-    CMP --> OUT5[COMPARISON.md]
 ```
 
 ---
 
-## ✨ Principais Funcionalidades
+## 🌐 Pronto para Fusão Multi-Linguagem (PHP, Java, Python)
 
-- **Medição Energética Baseada em Hardware**: Captura o consumo de energia em tempo real do host completo e de processos PHP específicos utilizando o recurso Intel/AMD RAPL via Scaphandre.
-- **Perfilamento de Chamadas (Profiling)**: Coleta pilhas de chamadas (*call stacks*) do servidor PHP em alta frequência (padrão de 99 Hz) através do `phpspy`, sem a necessidade de modificar o código-fonte da aplicação ou instalar extensões pesadas no PHP.
-- **Desconto de Baseline (Dynamic Energy)**: Mede o consumo de energia da máquina em repouso (*idle baseline*) antes do teste de carga e subtrai essa taxa do consumo total, isolando a **energia dinâmica** consumida exclusivamente pelo processamento da requisição.
-- **Atribuição Energética por Função**: Realiza a correlação temporal entre os pontos de consumo em microwatts (Scaphandre) e os traces de execução (phpspy), atribuindo Joules diretamente a cada função e pilha de chamadas.
-- **Flamegraphs de Energia e CPU**:
-  - `cpu-flamegraph.svg`: Mostra em qual função a aplicação passou mais tempo de CPU.
-  - `energy-flamegraph.svg`: Mostra em qual função a aplicação consumiu mais microjoules de energia.
-- **Relatórios Granulares em CSV**:
-  - `top-functions.csv`: Ranqueamento completo de funções por consumo de energia em Joules (*self* e *inclusive*) e porcentagem de impacto no processo PHP.
-  - `function-times.csv`: Métricas detalhadas de tempo de execução por função (tempo total em segundos, tempo próprio, tempo inclusivo e duração média em milissegundos por requisição).
-- **Estimativa de Emissões de Carbono Operacionais**: Converte Joules consumidos para kWh e calcula as emissões de dióxido de carbono equivalente ($g\text{CO}_2e$) com base na intensidade de carbono da matriz elétrica local ($g\text{CO}_2e/\text{kWh}$).
-- **Carga de Trabalho Estável (Constant Arrival Rate)**: O `k6` impõe um volume estritamente controlado de requisições por segundo, garantindo comparabilidade justa entre execuções.
-- **Comparação Automatizada (Slow vs Fast)**: O script `run-comparison.sh` executa as versões não otimizada (`slow`) e otimizada (`fast`), calcula a equivalência de resultados e gera um relatório detalhado (`COMPARISON.md`) utilizando a tabela `function-times.csv` para comparar as reduções percentuais de tempo e energia por função.
+O medidor foi arquitetado para unificar três ecossistemas em uma interface padronizada:
 
----
+```bash
+./run-meter.sh --language <php|java|python> --mode <local|container|process>
+```
 
-## 🔬 Como Funciona em Detalhes
-
-### 1. Inicialização e Verificação de Equivalência
-O servidor embutido do PHP (`php -S`) é iniciado no endereço especificado (ex: `127.0.0.1:8080`). Antes da medição, o script `verify-equivalence.sh` realiza requisições de teste para garantir que ambas as implementações (`slow` e `fast`) gerem exatamente os mesmos resultados matemáticos e de texto (checagem de *checksum* e contagens).
-
-### 2. Aquecimento (*Warm-up*)
-Um pré-teste curto com o `k6` aquece os caches de instrução do sistema operacional e da máquina virtual PHP, evitando viés de inicialização fria nas medições.
-
-### 3. Medição de Baseline (*Idle Baseline*)
-O Scaphandre é executado durante alguns segundos sem nenhuma requisição HTTP sendo enviada para a aplicação. Essa medição registra a taxa de consumo de energia em repouso do sistema e do processo PHP.
-
-### 4. Coleta Concorrente de Dados
-Durante a execução do workload de produção com `k6`:
-- **Scaphandre**: Coleta amostras de consumo elétrico (em microwatts) a cada intervalo regular (ex: 1 segundo).
-- **phpspy**: Amostra as pilhas de chamadas ativas do processo PHP a 99 Hz, atribuindo um *timestamp* preciso a cada *stack trace*.
-- **k6**: Executa o número exato de requisições por segundo configurado no `RATE` e salva métricas detalhadas de latência ($p_{50}, p_{90}, p_{95}, \text{máx}$).
-
-### 5. Integração de Energia, Correlação Temporal e Exportação de Tabelas (`analyze_measurement.py`)
-A integração matemática do consumo elétrico e a atribuição por função ocorrem da seguinte forma:
-
-1. **Integração do Consumo Energético**: Os pontos de consumo de potência $P(t)$ em microwatts coletados pelo Scaphandre são integrados no tempo $t$ através da regra trapezoidal para calcular a energia total em Joules ($J = \int P(t) dt$).
-2. **Desconto de Baseline**: A potência média de baseline é multiplicada pela duração do teste e subtraída da energia total para obter a **energia dinâmica** ($\text{Energia Dynamic} = \text{Energia Total} - \text{Energia Baseline}$).
-3. **Divisão de Intervalos e Atribuição de Stacks**:
-   - O tempo de teste é fatiado nos intervalos delimitados pelas amostras do Scaphandre.
-   - Para cada intervalo de tempo, calcula-se a energia consumida em microjoules.
-   - As amostras de pilhas de execução do `phpspy` que caíram dentro desse mesmo intervalo recebem uma fatia proporcional dessa energia.
-   - Os resultados são agregados por pilha de execução e convertidos no formato de Flamegraph.
-4. **Métricas de Tempo e Exportação de Tabelas CSV**:
-   - O analisador reconstrói o tempo próprio (*self time*) e tempo inclusivo (*inclusive time*) de cada função com base nas amostras do `phpspy`.
-   - É gerado o arquivo `top-functions.csv`, ordenando as funções pelo seu consumo energético absoluto (Joules) e percentual em relação ao total do processo PHP.
-   - É gerado o arquivo `function-times.csv`, consolidando os tempos totais de CPU e o tempo médio em milissegundos gasto por requisição bem-sucedida.
-
-### 6. Emissões de Carbono
-A conversão para emissões de carbono é calculada conforme a fórmula:
-
-$$\text{Energia (kWh)} = \frac{\text{Energia (Joules)}}{3.600.000}$$
-
-$$\text{Emissões } (g\text{CO}_2e) = \text{Energia (kWh)} \times \text{Intensidade de Carbono } \left(\frac{g\text{CO}_2e}{\text{kWh}}\right)$$
+- **PHP** *(Ativo)*: Utiliza amostragem via `phpspy` a 99 Hz + Scaphandre RAPL.
+- **Java** *(Preparado para o merge)*: Integrará `async-profiler` / JVM RAPL.
+- **Python** *(Preparado para o merge)*: Integrará `py-spy` / Austin.
 
 ---
 
 ## 🚀 Guia de Início Rápido (Quickstart)
 
-### 1. Clonar / Descompactar o Repositório
-```bash
-cd green-php-lab-meter-ready
-```
-
-### 2. Instalar Ferramentas Necessárias
+### 1. Instalar Ferramentas Necessárias
 Execute o script de instalação (requer Ubuntu/Debian Linux nativo):
 ```bash
 ./measurement/install-tools-ubuntu.sh
 ```
-*Este script instala o `k6`, `scaphandre`, compila o `phpspy` e clona o `FlameGraph`.*
 
-### 3. Verificar o Ambiente
-Confirme que seu hardware e kernel atendem a todos os requisitos:
+### 2. Verificar o Ambiente
+Confirme que o hardware e o kernel atendem a todos os requisitos:
 ```bash
 ./measurement/check-environment.sh
 ```
-*O script verificará a presença das interfaces RAPL (`/sys/class/powercap`), status do PHP (non-ZTS), permissões e executará um teste rápido de fumaça.*
 
-### 4. Configurar Parâmetros
-Edite o arquivo de configuração para adequar à sua máquina e localização:
+### 3. Iniciar o Medidor (Terminal 1)
+Inicie a medição informando a linguagem e o modo desejado:
 ```bash
-nano config/experiment.env
+./run-meter.sh -l php -m local
+```
+*O script coletará o consumo em repouso (baseline) e abrirá a janela de medição pelo tempo configurado.*
+
+### 4. Executar o Teste de Carga (Terminal 2 ou Máquina Remota)
+Durante a janela de medição aberta no Terminal 1, envie o tráfego de carga:
+```bash
+./run-load-test.sh
 ```
 
-### 5. Executar Comparação Completa (Slow vs Fast)
-```bash
-./measurement/run-comparison.sh
-```
-Ao final da execução, o relatório de comparação estará disponível em `results/comparison-YYYYMMDD-HHMMSS/COMPARISON.md`.
+Ao término, os relatórios completos e Flamegraphs estarão disponíveis no diretório `results/php-local-YYYYMMDD-HHMMSS/`.
 
 ---
 
-## ⚙️ Configuração do Experimento (`config/experiment.env`)
+## 🎯 Modos de Execução do Medidor (`run-meter.sh`)
 
-O arquivo `config/experiment.env` centraliza todas as variáveis do teste:
+O medidor suporta três formas de execução:
 
-| Parâmetro | Valor Padrão | Descrição |
-|---|---:|---|
-| `HOST` | `127.0.0.1` | Endereço IP onde o servidor PHP escutará. |
-| `PORT` | `8080` | Porta do servidor PHP. |
-| `BASE_URL` | `http://127.0.0.1:8080` | URL base para os testes HTTP. |
-| `WORKLOAD` | `mixed` | Tipo de carga de trabalho (`cpu`, `text`, `mixed`). |
-| `SCALE` | `1` | Fator de escala do peso computacional (1 a 5). |
-| `RATE` | `2` | Taxa constante de requisições por segundo no `k6`. |
-| `DURATION_SECONDS` | `60` | Duração total da medição da carga em segundos. |
-| `WARMUP_SECONDS` | `10` | Duração da fase de aquecimento (*warm-up*). |
-| `BASELINE_SECONDS` | `15` | Duração da medição de consumo em repouso (*baseline*). |
-| `COLLECTOR_LEAD_SECONDS` | `3` | Margem de tempo inicial para os coletores iniciarem antes da carga. |
-| `COLLECTOR_TAIL_SECONDS` | `5` | Margem de tempo final para os coletores encerrarem após a carga. |
-| `COOLDOWN_SECONDS` | `30` | Tempo de espera e resfriamento entre os testes `slow` e `fast`. |
-| `PHPSPY_RATE_HZ` | `99` | Frequência de amostragem do `phpspy` em Hertz (amostras/segundo). |
-| `SCAPHANDRE_STEP_SECONDS` | `1` | Intervalo de amostragem de potência do Scaphandre em segundos. |
-| `SCAPHANDRE_PROCESS_REGEX` | `php` | Expressão regular para filtrar o processo PHP no Scaphandre. |
-| `SCAPHANDRE_MAX_PROCESSES` | `100` | Limite máximo de processos rastreados pelo Scaphandre. |
-| `CARBON_INTENSITY_G_PER_KWH` | `100` | Intensidade de carbono da rede elétrica ($g\text{CO}_2e/\text{kWh}$). **Substitua pelo valor oficial da sua região.** |
+### 1. Modo Local (`-m local`)
+Inicia automaticamente o servidor embutido local da aplicação e anexa o profiler ao processo criado:
+```bash
+./run-meter.sh -l php -m local
+```
+
+### 2. Modo Container Docker (`-m container`)
+Identifica o PID do container no Host Linux através de `docker inspect` e monitora o container diretamente pelo Host:
+```bash
+# Exemplo com WordPress ou qualquer container PHP
+./run-meter.sh -l php -m container -c nome_do_container_php
+```
+
+### 3. Modo Processo Específico (`-m process`)
+Conecta os coletores diretamente a um processo existente no Linux através do seu PID:
+```bash
+./run-meter.sh -l php -m process -p 12345
+```
+
+### Opções do `run-meter.sh`:
+| Parâmetro | Descrição | Padrão |
+|---|---|---|
+| `-l, --language <lang>` | Linguagem da aplicação (`php`, `java`, `python`) | `php` |
+| `-m, --mode <mode>` | Modo de execução (`local`, `container`, `process`) | `local` |
+| `-c, --container <nome>` | Nome ou ID do container Docker (para modo container) | - |
+| `-p, --pid <pid>` | PID do processo alvo (para modo process) | - |
+| `-d, --duration <seg>` | Duração da janela de medição em segundos | `60` |
+| `-b, --baseline <seg>` | Duração da medição em repouso (*baseline*) | `15` |
+| `-o, --output <dir>` | Diretório customizado de saída para os resultados | `results/...` |
+| `--config <arquivo>` | Caminho do arquivo de configuração `.env` | `config/experiment.env` |
 
 ---
 
-## 📊 Estrutura dos Arquivos de Resultado
+## ⚡ Execução Separada do Teste de Carga (`run-load-test.sh`)
 
-Após executar o teste, os resultados são salvos no diretório `results/`:
+O script `run-load-test.sh` executa o `k6` de forma independente:
 
-```text
-results/comparison-YYYYMMDD-HHMMSS/
-├── slow/
-│   ├── cpu-flamegraph.svg        # Flamegraph de tempo de CPU
-│   ├── energy-flamegraph.svg     # Flamegraph de energia atribuída
-│   ├── SUMMARY.md                # Relatório detalhado em Markdown
-│   ├── summary.json              # Dados consolidados em formato JSON
-│   ├── top-functions.csv         # Funções ordenadas por consumo energético
-│   ├── function-times.csv        # Tempo total e médio por função
-│   ├── scaphandre.json           # Série temporal bruta de microwatts
-│   ├── scaphandre-baseline.json  # Medição bruta do consumo em repouso
-│   ├── phpspy.txt                # Call stacks brutas coletadas
-│   ├── k6-summary.json           # Métricas brutas do k6
-│   └── window.json               # Timestamps exatos da janela de teste
-├── fast/
-│   └── ...                       # Estrutura idêntica para a versão fast
-└── COMPARISON.md                 # Tabela comparativa entre slow e fast
+```bash
+# Executar workload padrão do experiment.env (WordPress login/admin ou sintético)
+./run-load-test.sh
+
+# Executar workload sintético específico (cpu, text, mixed)
+./run-load-test.sh cpu
+
+# Executar apontando para outro IP / porta na rede com taxa e duração customizadas
+./run-load-test.sh --url http://192.168.1.50:8080 --rate 5 --duration 60 --workload wordpress
 ```
 
-### Detalhes dos Flamegraphs
-- **`cpu-flamegraph.svg`**: A largura dos blocos representa o número de amostras registradas pelo profiler (proporcional ao tempo de processamento em CPU).
-- **`energy-flamegraph.svg`**: A largura dos blocos representa os **microjoules de energia consumidos** e atribuídos àquela pilha de chamadas específica.
+### Opções do `run-load-test.sh`:
+| Parâmetro | Descrição | Padrão |
+|---|---|---|
+| `-u, --url <url>` | URL base da aplicação sob teste | `http://127.0.0.1:8080` |
+| `-w, --workload <tipo>` | Tipo de carga (`wordpress`, `cpu`, `text`, `mixed`, `login`) | `wordpress` |
+| `-r, --rate <req/s>` | Taxa constante de requisições por segundo | `2` |
+| `-d, --duration <seg>` | Duração do teste de carga em segundos | `60` |
+| `-s, --scale <escala>` | Fator de escala do peso computacional (1 a 5) | `1` |
+| `--warmup <seg>` | Duração de aquecimento prévio opcional | `0` |
+| `--user <user>` / `--pass <pass>` | Credenciais para o teste de login no WordPress | `marcos` / `Teste1234` |
+| `-o, --output <arquivo>` | Caminho para salvar o `k6-summary.json` | `results/k6-summary.json` |
 
-### Detalhes das Tabelas CSV
+---
 
-#### `top-functions.csv`
-Tabela com a classificação de todas as funções segundo seu impacto energético.
-- `function`: Nome da função PHP.
-- `self_energy_j`: Energia consumida exclusivamente pela própria função (em Joules).
-- `self_energy_percent_of_php`: Porcentagem da energia total do processo PHP consumida diretamente pela função.
-- `inclusive_energy_j`: Energia consumida pela função somada às funções que ela chamou (em Joules).
-- `inclusive_energy_percent_of_php`: Porcentagem inclusiva da energia do processo PHP.
-- `self_time_s` / `avg_self_time_ms`: Tempo próprio total (em segundos) e tempo médio por requisição bem-sucedida (em milissegundos).
-- `inclusive_time_s` / `avg_inclusive_time_ms`: Tempo inclusivo total (em segundos) e tempo médio por requisição (em milissegundos).
+## 📊 Painel Visual Interativo
 
-#### `function-times.csv`
-Tabela focada no detalhamento temporal de todas as funções executadas.
-- `function`: Nome da função PHP.
-- `total_time_s`: Tempo total acumulado de execução da função (em segundos).
-- `avg_time_ms`: Tempo médio de execução por requisição bem-sucedida (em milissegundos).
-- `self_time_s` / `avg_self_time_ms`: Tempo de execução próprio (excluindo funções filhas).
-- `inclusive_time_s` / `avg_inclusive_time_ms`: Tempo de execução inclusivo (incluindo funções filhas).
+O projeto conta com um painel web interativo para visualização de resultados:
 
-### Exemplo de Hotspots Esperados
-- **Versão Slow**: `isPrimeSlow`, `calculatePrimeChecksumSlow`, `countWordsSlow`.
-- **Versão Fast**: `isPrimeFast`, `calculatePrimeChecksumFast`, `countWordsFast`.
+1. Inicie o servidor da interface:
+```bash
+./scripts/start-server.sh
+```
+2. Abra o navegador em `http://127.0.0.1:8080/`.
+3. Navegue pelas execuções passadas no menu lateral e visualize:
+   - **Métricas de Energia**: Total do Host, Total do Processo e Energia Dinâmica (com desconto de baseline).
+   - **Potência Média (Watts)** e **Emissões de Carbono Estimadas ($g\text{CO}_2e$)**.
+   - **Flamegraph Interativo de Energia**: Atribuição de microjoules por função.
+   - **Flamegraph Interativo de CPU**: Amostras de tempo de execução por pilha de chamadas.
+
+---
+
+## ⚙️ Configuração (`config/experiment.env`)
+
+O arquivo `config/experiment.env` centraliza as configurações padrão:
+
+```env
+TARGET_LANGUAGE=php
+MODE=local
+
+HOST=127.0.0.1
+PORT=8080
+BASE_URL=http://127.0.0.1:8080
+
+WORKLOAD=wordpress
+WP_USER=marcos
+WP_PASS=Teste1234
+SCALE=1
+RATE=2
+
+DURATION_SECONDS=60
+WARMUP_SECONDS=10
+BASELINE_SECONDS=15
+COLLECTOR_LEAD_SECONDS=3
+COLLECTOR_TAIL_SECONDS=5
+
+PHPSPY_RATE_HZ=99
+SCAPHANDRE_STEP_SECONDS=1
+SCAPHANDRE_PROCESS_REGEX="(php|mysqld|mariadbd|apache2)"
+SCAPHANDRE_MAX_PROCESSES=100
+
+CARBON_INTENSITY_G_PER_KWH=100
+```
 
 ---
 
@@ -256,59 +239,44 @@ Tabela focada no detalhamento temporal de todas as funções executadas.
 ```text
 green-php-lab-meter-ready/
 ├── README.md                   # Documentação do projeto
-├── carbon.py                   # CLI standalone para cálculo de emissões de carbono
-├── k6.js                       # Script de teste de carga reprodutível do k6
+├── run-meter.sh                # Entrypoint universal do medidor (PHP, Java, Python)
+├── run-load-test.sh            # Entrypoint do gerador de carga (k6)
+├── carbon.py                   # Calculadora standalone de emissões de carbono
+├── k6.js                       # Script de teste de carga constante do k6
 ├── config/
-│   └── experiment.env          # Arquivo de configuração de parâmetros do teste
+│   └── experiment.env          # Arquivo de configuração de parâmetros
 ├── measurement/
-│   ├── install-tools-ubuntu.sh # Script de instalação automática de dependências
-│   ├── check-environment.sh    # Script de validação de ambiente (RAPL, PHP, ferramentas)
-│   ├── run-experiment.sh       # Executa o experimento para uma única versão (slow/fast)
-│   ├── run-comparison.sh       # Executa o ciclo completo de comparação (slow + fast)
-│   ├── analyze_measurement.py  # Engine em Python de integração e atribuição de energia
-│   ├── compare_runs.py         # Script que gera o relatório comparativo COMPARISON.md
-│   ├── test-analyzer.sh        # Script de auto-teste unitário do analisador
-│   └── test-fixtures/         # Dados de exemplo para validação do analisador
+│   ├── run-meter.sh            # Engine de medição e acoplamento de coletores
+│   ├── run-load-test.sh        # Engine de execução do k6
+│   ├── analyze_measurement.py  # Analisador de correlação temporal de energia e stacks
+│   ├── check-environment.sh    # Validação do ambiente e contadores RAPL
+│   ├── install-tools-ubuntu.sh # Instalador de dependências no Ubuntu Linux
+│   ├── test-analyzer.sh        # Testes automatizados do analisador
+│   └── test-fixtures/         # Conjunto de dados de teste para validação
 ├── public/
-│   └── index.php               # Aplicação PHP com os workloads (slow vs fast)
+│   └── index.php               # Aplicação PHP de teste e painel visual interativo
 ├── scripts/
-│   ├── start-server.sh         # Script utilitário para iniciar o servidor PHP
-│   └── verify-equivalence.sh   # Verifica se as respostas de slow e fast são idênticas
+│   └── start-server.sh         # Utilitário para iniciar o painel web
 ├── tools/
-│   ├── FlameGraph/             # Repositório clonado do FlameGraph (flamegraph.pl)
-│   └── phpspy/                 # Repositório clonado e compilado do phpspy
-└── results/                    # Diretório onde são salvos os relatórios gerados
+│   ├── FlameGraph/             # Renderizador SVG de Flamegraphs
+│   └── phpspy/                 # Profiler de call stacks para PHP
+└── results/                    # Diretório onde são gravados os relatórios de medição
 ```
 
 ---
 
 ## 🧮 Calculadora de Carbono (`carbon.py`)
 
-O repositório inclui uma ferramenta de linha de comando (`carbon.py`) para calcular emissões operacionais e eficiência energética a partir de Joules:
+Utilitário de linha de comando para conversão direta de Joules em emissões operacionais:
 
-### Uso:
 ```bash
 ./carbon.py --energy-j 125.5 --carbon-intensity 100 --requests 120
 ```
 
-### Saída de Exemplo:
-```json
-{
-  "energy_joules": 125.5,
-  "energy_kwh": 3.486111111111111e-05,
-  "carbon_intensity_g_per_kwh": 100.0,
-  "emissions_g_co2e": 0.003486111111111111,
-  "requests": 120,
-  "energy_j_per_request": 1.0458333333333334,
-  "emissions_g_per_1000_requests": 0.029050925925925927
-}
-```
-
 ---
 
-## 📌 Limitações de Interpretação e Boas Práticas
+## 📌 Boas Práticas de Medição
 
-1. **Atribuição no Nível de Processo**: O Scaphandre atribui energia a um processo com base em contadores de hardware RAPL e no uso de CPU do SO. Não existe um sensor físico de energia dentro de uma função PHP. A energia por função é uma **estimativa por correlação temporal**.
-2. **Isolamento da Máquina de Testes**: Outros processos rodando na mesma máquina impactam o consumo de energia do Host. Para relatórios científicos ou de produção, é recomendável rodar o `k6` em um computador físico separado.
-3. **Repetição Estatística**: Sempre repita o experimento no mínimo **5 vezes** em ambientes controlados antes de tirar conclusões definitivas.
-4. **Escopo das Emissões**: Os valores de carbono refletem apenas as **emissões operacionais de uso** (Fase de Uso). Eles não cobrem o ciclo de vida completo do hardware (*embodied carbon* / fabricação / descarte).
+1. **Desacoplamento de Carga**: Execute o gerador `run-load-test.sh` em um computador cliente separado na rede para garantir isolamento elétrico completo dos contadores RAPL.
+2. **Repetição de Medições**: Realize no mínimo 5 repetições para cada medição experimental a fim de obter significância estatística.
+3. **Desconto de Baseline**: O medidor desconta automaticamente a taxa de consumo elétrico da máquina em repouso (*idle baseline*), gerando a métrica de **energia dinâmica**.

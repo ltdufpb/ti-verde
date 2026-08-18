@@ -148,8 +148,9 @@ if [[ ! -x "$TOOLS_DIR/async-profiler/bin/asprof" ]]; then
   rm -f /tmp/async-profiler.tar.gz
 fi
 
+chmod +x "$PROJECT_DIR"/*.sh 2>/dev/null || true
 chmod +x "$PROJECT_DIR"/measurement/*.sh
-chmod +x "$PROJECT_DIR"/scripts/*.sh
+chmod +x "$PROJECT_DIR"/scripts/*.sh 2>/dev/null || true
 chmod +x "$PROJECT_DIR"/carbon.py
 
 echo

@@ -4,8 +4,7 @@ declare(strict_types=1);
 /**
  * Green PHP Lab
  *
- * A deliberately small application with function-level hotspots.
- * The slow and fast implementations produce equivalent results.
+ * Micro-aplicação de teste e painel interativo de perfilamento energético.
  */
 
 header('Content-Type: application/json; charset=utf-8');
@@ -30,23 +29,7 @@ function positiveInt(string $name, int $default, int $max): int
     return max(1, min($value, $max));
 }
 
-function isPrimeSlow(int $number): bool
-{
-    if ($number < 2) {
-        return false;
-    }
-
-    // Intentionally inefficient: tests every possible divisor.
-    for ($divisor = 2; $divisor < $number; $divisor++) {
-        if ($number % $divisor === 0) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-function isPrimeFast(int $number): bool
+function isPrime(int $number): bool
 {
     if ($number < 2) {
         return false;
@@ -71,28 +54,13 @@ function isPrimeFast(int $number): bool
     return true;
 }
 
-function calculatePrimeChecksumSlow(int $limit): array
+function calculatePrimeChecksum(int $limit): array
 {
     $sum = 0;
     $count = 0;
 
     for ($number = 2; $number <= $limit; $number++) {
-        if (isPrimeSlow($number)) {
-            $sum += $number;
-            $count++;
-        }
-    }
-
-    return ['count' => $count, 'checksum' => $sum];
-}
-
-function calculatePrimeChecksumFast(int $limit): array
-{
-    $sum = 0;
-    $count = 0;
-
-    for ($number = 2; $number <= $limit; $number++) {
-        if (isPrimeFast($number)) {
+        if (isPrime($number)) {
             $sum += $number;
             $count++;
         }
@@ -132,38 +100,7 @@ function normalizeSentence(string $sentence): array
     ));
 }
 
-function countWordsSlow(array $corpus): array
-{
-    $allWords = [];
-
-    foreach ($corpus as $sentence) {
-        foreach (normalizeSentence($sentence) as $word) {
-            $allWords[] = $word;
-        }
-    }
-
-    $uniqueWords = array_values(array_unique($allWords));
-    $frequencies = [];
-
-    // Intentionally inefficient: rescans all words for every unique word.
-    foreach ($uniqueWords as $uniqueWord) {
-        $count = 0;
-
-        foreach ($allWords as $word) {
-            if ($word === $uniqueWord) {
-                $count++;
-            }
-        }
-
-        $frequencies[$uniqueWord] = $count;
-    }
-
-    ksort($frequencies);
-
-    return $frequencies;
-}
-
-function countWordsFast(array $corpus): array
+function countWords(array $corpus): array
 {
     $frequencies = [];
 
@@ -183,13 +120,10 @@ function textChecksum(array $frequencies): string
     return hash('sha256', json_encode($frequencies, JSON_UNESCAPED_SLASHES));
 }
 
-function executeCpuWorkload(string $implementation, int $scale): array
+function executeCpuWorkload(int $scale): array
 {
     $limit = 2500 * $scale;
-
-    $result = $implementation === 'slow'
-        ? calculatePrimeChecksumSlow($limit)
-        : calculatePrimeChecksumFast($limit);
+    $result = calculatePrimeChecksum($limit);
 
     return [
         'limit' => $limit,
@@ -198,14 +132,11 @@ function executeCpuWorkload(string $implementation, int $scale): array
     ];
 }
 
-function executeTextWorkload(string $implementation, int $scale): array
+function executeTextWorkload(int $scale): array
 {
     $paragraphs = 300 * $scale;
     $corpus = buildTextCorpus($paragraphs);
-
-    $frequencies = $implementation === 'slow'
-        ? countWordsSlow($corpus)
-        : countWordsFast($corpus);
+    $frequencies = countWords($corpus);
 
     return [
         'paragraphs' => $paragraphs,
@@ -214,10 +145,70 @@ function executeTextWorkload(string $implementation, int $scale): array
     ];
 }
 
-function executeMixedWorkload(string $implementation, int $scale): array
+function wpLoadAllOptions(int $count): array
 {
-    $cpu = executeCpuWorkload($implementation, $scale);
-    $text = executeTextWorkload($implementation, $scale);
+    $options = [];
+    for ($i = 0; $i < $count; $i++) {
+        $options['wp_option_autoload_' . $i] = 'wp_setting_' . $i;
+    }
+    return $options;
+}
+
+function wpQueryGetPosts(int $postsCount): array
+{
+    $posts = [];
+    for ($i = 0; $i < $postsCount; $i++) {
+        $posts[] = [
+            'id' => $i,
+            'title' => 'WordPress Post Title ' . $i,
+            'content' => '<!-- wp:paragraph --><p>Welcome to WordPress post ' . $i . ' with [custom_shortcode id=' . $i . ']</p><!-- /wp:paragraph -->',
+            'meta' => ['key_0' => hash('sha256', 'post_meta_' . $i . '_0')],
+        ];
+    }
+    return $posts;
+}
+
+function wpApplyFilters(string $tag, string $value, int $iterations): string
+{
+    static $cache = [];
+    $cacheKey = md5($tag . $value);
+    if (isset($cache[$cacheKey])) {
+        return $cache[$cacheKey];
+    }
+    $rendered = str_replace('[custom_shortcode id=', '<strong>Shortcode Rendered ', $value);
+    $rendered = str_replace(']', '</strong>', $rendered);
+    $rendered = strtolower(trim($rendered));
+    $cache[$cacheKey] = $rendered;
+    return $rendered;
+}
+
+function executeWordpressWorkload(int $scale): array
+{
+    $optionsCount = 100 * $scale;
+    $postsCount = 15 * $scale;
+    $filterIterations = 200 * $scale;
+
+    $options = wpLoadAllOptions($optionsCount);
+    $posts = wpQueryGetPosts($postsCount);
+    $renderedContent = '';
+    foreach ($posts as $post) {
+        $renderedContent .= wpApplyFilters('the_content', $post['content'], $filterIterations);
+    }
+
+    $checksum = hash('sha256', count($options) . count($posts) . strlen($renderedContent));
+
+    return [
+        'options_loaded' => count($options),
+        'posts_queried' => count($posts),
+        'rendered_length' => strlen($renderedContent),
+        'checksum' => $checksum,
+    ];
+}
+
+function executeMixedWorkload(int $scale): array
+{
+    $cpu = executeCpuWorkload($scale);
+    $text = executeTextWorkload($scale);
 
     return [
         'cpu' => $cpu,
@@ -242,8 +233,8 @@ if ($path === '/api/results') {
     if (is_dir($resultsDir)) {
         $files = scandir($resultsDir);
         foreach ($files as $file) {
-            if ($file !== '.' && $file !== '..' && str_starts_with($file, 'comparison-')) {
-                if (is_file("$resultsDir/$file/slow/summary.json") && is_file("$resultsDir/$file/fast/summary.json")) {
+            if ($file !== '.' && $file !== '..' && is_dir("$resultsDir/$file")) {
+                if (is_file("$resultsDir/$file/summary.json")) {
                     $runs[] = $file;
                 }
             }
@@ -268,6 +259,7 @@ if ($path === '/api/file') {
         'svg'  => 'image/svg+xml',
         'json' => 'application/json',
         'md'   => 'text/markdown; charset=utf-8',
+        'csv'  => 'text/csv; charset=utf-8',
     ];
     if (!isset($contentTypes[$ext])) {
         jsonResponse(['error' => 'Tipo de arquivo nao suportado'], 400);
@@ -285,19 +277,19 @@ if ($path === '/') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Green PHP Lab — Painel Interativo</title>
+    <title>Green Energy Lab — Painel de Medição</title>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
 
         :root {
             --bg-dark: #0b0f19;
             --bg-card: #111827;
-            --border-color: rgba(255, 255, 255, 0.06);
+            --border-color: rgba(255, 255, 255, 0.08);
             --text-primary: #f3f4f6;
             --text-secondary: #9ca3af;
             --color-green: #10b981;
             --color-blue: #3b82f6;
-            --color-red: #ef4444;
+            --color-amber: #f59e0b;
         }
 
         * {
@@ -406,14 +398,15 @@ if ($path === '/') {
         }
 
         .top-bar h2 {
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             font-weight: 600;
         }
 
         .meta-info {
             display: flex;
-            gap: 16px;
+            gap: 12px;
             font-size: 0.85rem;
+            flex-wrap: wrap;
         }
 
         .meta-badge {
@@ -435,7 +428,7 @@ if ($path === '/') {
             padding: 32px;
             display: flex;
             flex-direction: column;
-            gap: 32px;
+            gap: 28px;
         }
 
         .metrics-row {
@@ -464,10 +457,6 @@ if ($path === '/') {
             opacity: 0.8;
         }
 
-        .metric-card.reduction::before {
-            background: linear-gradient(to right, var(--color-green), #34d399);
-        }
-
         .metric-title {
             font-size: 0.8rem;
             text-transform: uppercase;
@@ -489,7 +478,7 @@ if ($path === '/') {
         }
 
         .metric-badge {
-            font-size: 0.85rem;
+            font-size: 0.8rem;
             font-weight: 600;
             padding: 2px 8px;
             border-radius: 999px;
@@ -569,12 +558,11 @@ if ($path === '/') {
             fill: var(--color-blue);
         }
 
-        .flamegraphs-container {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 24px;
-            flex: 1;
+        .flamegraph-container {
+            width: 100%;
             min-height: 520px;
+            display: flex;
+            flex-direction: column;
         }
 
         .flamegraph-panel {
@@ -585,6 +573,7 @@ if ($path === '/') {
             flex-direction: column;
             overflow: hidden;
             box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+            flex: 1;
         }
 
         .panel-header {
@@ -601,25 +590,6 @@ if ($path === '/') {
             font-weight: 600;
         }
 
-        .panel-badge {
-            font-size: 0.75rem;
-            font-weight: 500;
-            padding: 2px 8px;
-            border-radius: 4px;
-        }
-
-        .panel-badge.slow {
-            background-color: rgba(239, 68, 68, 0.1);
-            color: var(--color-red);
-            border: 1px solid rgba(239, 68, 68, 0.2);
-        }
-
-        .panel-badge.fast {
-            background-color: rgba(16, 185, 129, 0.1);
-            color: var(--color-green);
-            border: 1px solid rgba(16, 185, 129, 0.2);
-        }
-
         .flamegraph-body {
             flex: 1;
             background-color: #1e1e24;
@@ -627,12 +597,13 @@ if ($path === '/') {
             align-items: center;
             justify-content: center;
             position: relative;
-            min-height: 400px;
+            min-height: 480px;
         }
 
         .flamegraph-body object {
             width: 100%;
             height: 100%;
+            min-height: 480px;
             border: none;
             display: block;
         }
@@ -662,7 +633,7 @@ if ($path === '/') {
 
         .welcome-desc {
             color: var(--text-secondary);
-            max-width: 480px;
+            max-width: 520px;
             font-size: 0.95rem;
             line-height: 1.5;
         }
@@ -674,7 +645,7 @@ if ($path === '/') {
             <svg viewBox="0 0 24 24">
                 <path d="M17,8C8,10 5.9,16.17 3.82,21.34L5.71,22L6.66,19.7C7.14,19.87 7.64,20 8,20C19,20 22,3 22,3C22,3 21,5 17,8M16,11C13.5,12.38 10.74,14.24 8.71,16.27C8.13,16.85 7.67,17.47 7.31,18.1L12.05,13.36C12.44,12.97 12.44,12.33 12.05,11.95C11.66,11.56 11.03,11.56 10.64,11.95L5.9,16.69C5.74,15.75 5.86,14.63 6.38,13.5C7.94,10.06 11.5,8.25 15,7.3C15.6,8.5 16,9.8 16,11Z" />
             </svg>
-            <h1>Green PHP Lab</h1>
+            <h1>Green Energy Lab</h1>
         </div>
         <div class="runs-list" id="runsList">
             <!-- Rodadas carregadas dinamicamente -->
@@ -685,77 +656,77 @@ if ($path === '/') {
             <svg class="welcome-icon" viewBox="0 0 24 24">
                 <path d="M17,8C8,10 5.9,16.17 3.82,21.34L5.71,22L6.66,19.7C7.14,19.87 7.64,20 8,20C19,20 22,3 22,3C22,3 21,5 17,8M16,11C13.5,12.38 10.74,14.24 8.71,16.27C8.13,16.85 7.67,17.47 7.31,18.1L12.05,13.36C12.44,12.97 12.44,12.33 12.05,11.95C11.66,11.56 11.03,11.56 10.64,11.95L5.9,16.69C5.74,15.75 5.86,14.63 6.38,13.5C7.94,10.06 11.5,8.25 15,7.3C15.6,8.5 16,9.8 16,11Z" />
             </svg>
-            <h2 class="welcome-title">Painel de Performance e Energia</h2>
-            <p class="welcome-desc">Selecione uma execução no menu lateral para visualizar os dados de consumo de energia, emissão de carbono e interagir com os Flamegraphs de CPU e Energia.</p>
+            <h2 class="welcome-title">Painel de Medição Energética</h2>
+            <p class="welcome-desc">Selecione uma execução no menu lateral para visualizar os dados de consumo de energia, potência, emissão de carbono e interagir com os Flamegraphs de CPU e Energia.</p>
         </div>
 
         <div class="top-bar" style="display: none;" id="dashboardHeader">
             <div>
                 <h2 id="runTitle">rodada</h2>
                 <div class="meta-info" style="margin-top: 8px;">
-                    <div class="meta-badge">Workload: <span id="metaWorkload">-</span></div>
-                    <div class="meta-badge">Scale: <span id="metaScale">-</span></div>
-                    <div class="meta-badge">Rate: <span id="metaRate">-</span></div>
-                    <div class="meta-badge">Duration: <span id="metaDuration">-</span></div>
+                    <div class="meta-badge">Linguagem: <span id="metaLang">PHP</span></div>
+                    <div class="meta-badge">Duração: <span id="metaDuration">-</span></div>
+                    <div class="meta-badge">PID Alvo: <span id="metaPid">-</span></div>
+                    <div class="meta-badge" id="metaWorkloadBadge" style="display:none;">Workload: <span id="metaWorkload">-</span></div>
                 </div>
             </div>
         </div>
 
         <div class="dashboard-grid" style="display: none;" id="dashboardGrid">
             <div class="metrics-row">
-                <div class="metric-card reduction">
-                    <div class="metric-title">Latência p95</div>
+                <div class="metric-card">
+                    <div class="metric-title">Energia do Processo</div>
                     <div class="metric-value-container">
-                        <div class="metric-value" id="valLatencyPct">-0%</div>
-                        <div class="metric-badge">Redução</div>
+                        <div class="metric-value" id="valProcessEnergy">0 J</div>
+                        <div class="metric-badge">Processo</div>
                     </div>
                     <div class="metric-details">
-                        <div class="detail-line"><span>Slow:</span> <span id="valLatencySlow">0 ms</span></div>
-                        <div class="detail-line"><span>Fast:</span> <span id="valLatencyFast">0 ms</span></div>
-                    </div>
-                </div>
-
-                <div class="metric-card reduction">
-                    <div class="metric-title">Energia PHP (Processo)</div>
-                    <div class="metric-value-container">
-                        <div class="metric-value" id="valEnergyPct">-0%</div>
-                        <div class="metric-badge">Redução</div>
-                    </div>
-                    <div class="metric-details">
-                        <div class="detail-line"><span>Slow:</span> <span id="valEnergySlow">0 J</span></div>
-                        <div class="detail-line"><span>Fast:</span> <span id="valEnergyFast">0 J</span></div>
-                    </div>
-                </div>
-
-                <div class="metric-card reduction">
-                    <div class="metric-title">Emissões de CO2e</div>
-                    <div class="metric-value-container">
-                        <div class="metric-value" id="valCarbonPct">-0%</div>
-                        <div class="metric-badge">Redução</div>
-                    </div>
-                    <div class="metric-details">
-                        <div class="detail-line"><span>Slow:</span> <span id="valCarbonSlow">0 g</span></div>
-                        <div class="detail-line"><span>Fast:</span> <span id="valCarbonFast">0 g</span></div>
+                        <div class="detail-line"><span>Dinâmica:</span> <span id="valProcessDynamic">0 J</span></div>
+                        <div class="detail-line"><span>Potência Média:</span> <span id="valProcessPower">0 W</span></div>
                     </div>
                 </div>
 
                 <div class="metric-card">
-                    <div class="metric-title">Requisições & Potência</div>
+                    <div class="metric-title">Energia do Host Total</div>
                     <div class="metric-value-container">
-                        <div class="metric-value" id="valRequests">0</div>
-                        <div class="metric-badge" style="background-color:rgba(59,130,246,0.1);color:var(--color-blue);border-color:rgba(59,130,246,0.2)">Sucesso</div>
+                        <div class="metric-value" id="valHostEnergy">0 J</div>
+                        <div class="metric-badge" style="background-color:rgba(59,130,246,0.1);color:var(--color-blue);border-color:rgba(59,130,246,0.2)">Host</div>
                     </div>
                     <div class="metric-details">
-                        <div class="detail-line"><span>Potência Média (Slow):</span> <span id="valPowerSlow">0 W</span></div>
-                        <div class="detail-line"><span>Potência Média (Fast):</span> <span id="valPowerFast">0 W</span></div>
+                        <div class="detail-line"><span>Host Dinâmico:</span> <span id="valHostDynamic">0 J</span></div>
+                        <div class="detail-line"><span>Potência Host:</span> <span id="valHostPower">0 W</span></div>
+                    </div>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-title">Emissões de CO2e</div>
+                    <div class="metric-value-container">
+                        <div class="metric-value" id="valCarbon">0 g</div>
+                        <div class="metric-badge" style="background-color:rgba(245,158,11,0.1);color:var(--color-amber);border-color:rgba(245,158,11,0.2)">Carbono</div>
+                    </div>
+                    <div class="metric-details">
+                        <div class="detail-line"><span>Processo:</span> <span id="valCarbonProc">0 g</span></div>
+                        <div class="detail-line"><span>Host Total:</span> <span id="valCarbonHost">0 g</span></div>
+                    </div>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-title">Carga de Trabalho (k6)</div>
+                    <div class="metric-value-container">
+                        <div class="metric-value" id="valRequests">N/A</div>
+                        <div class="metric-badge">Reqs</div>
+                    </div>
+                    <div class="metric-details">
+                        <div class="detail-line"><span>Latência p95:</span> <span id="valLatencyP95">N/A</span></div>
+                        <div class="detail-line"><span>Energia/Req:</span> <span id="valEnergyReq">N/A</span></div>
                     </div>
                 </div>
             </div>
 
             <div class="tabs-row">
                 <div class="tab-buttons">
-                    <button class="tab-btn active" onclick="switchTab('cpu')" id="tabBtnCpu">Profiling de CPU</button>
-                    <button class="tab-btn" onclick="switchTab('energy')" id="tabBtnEnergy">Profiling de Energia</button>
+                    <button class="tab-btn active" onclick="switchTab('energy')" id="tabBtnEnergy">Flamegraph de Energia</button>
+                    <button class="tab-btn" onclick="switchTab('cpu')" id="tabBtnCpu">Flamegraph de CPU</button>
                 </div>
                 <div class="search-tip">
                     <svg viewBox="0 0 24 24"><path d="M11,18A7,7 0 0,1 4,11A7,7 0 0,1 11,4A7,7 0 0,1 18,11A7,7 0 0,1 11,18M11,2A9,9 0 0,0 2,11A9,9 0 0,0 11,20C12.44,20 13.8,19.64 15,19L20.5,24.5L22,23L16.5,17.5C17.64,16.3 18,14.94 18,13.5A9,9 0 0,0 11,2M11,5A6,6 0 0,1 17,11A6,6 0 0,1 11,17A6,6 0 0,1 5,11A6,6 0 0,1 11,5Z"/></svg>
@@ -763,24 +734,13 @@ if ($path === '/') {
                 </div>
             </div>
 
-            <div class="flamegraphs-container">
+            <div class="flamegraph-container">
                 <div class="flamegraph-panel">
                     <div class="panel-header">
-                        <span class="panel-title">Slow (Implementação Lenta)</span>
-                        <span class="panel-badge slow">Não Otimizado</span>
+                        <span class="panel-title" id="fgPanelTitle">Flamegraph de Energia Atribuída (Microjoules)</span>
                     </div>
                     <div class="flamegraph-body">
-                        <object id="fgSlow" type="image/svg+xml" data=""></object>
-                    </div>
-                </div>
-
-                <div class="flamegraph-panel">
-                    <div class="panel-header">
-                        <span class="panel-title">Fast (Implementação Otimizada)</span>
-                        <span class="panel-badge fast">Otimizado</span>
-                    </div>
-                    <div class="flamegraph-body">
-                        <object id="fgFast" type="image/svg+xml" data=""></object>
+                        <object id="fgObject" type="image/svg+xml" data=""></object>
                     </div>
                 </div>
             </div>
@@ -789,7 +749,7 @@ if ($path === '/') {
 
     <script>
         let currentRun = "";
-        let currentType = "cpu";
+        let currentType = "energy";
 
         async function loadRuns() {
             try {
@@ -798,33 +758,15 @@ if ($path === '/') {
                 const list = document.getElementById('runsList');
                 list.innerHTML = '';
                 
-                if (data.runs.length === 0) {
-                    list.innerHTML = '<div style="color:var(--text-secondary);text-align:center;padding:20px;">Nenhuma medição encontrada. Execute ./measurement/run-comparison.sh para medir.</div>';
+                if (!data.runs || data.runs.length === 0) {
+                    list.innerHTML = '<div style="color:var(--text-secondary);text-align:center;padding:20px;">Nenhuma medição encontrada. Execute ./run-meter.sh para medir.</div>';
                     return;
                 }
 
                 data.runs.forEach(run => {
                     const item = document.createElement('div');
                     item.className = 'run-item';
-                    
-                    const parts = run.split('-');
-                    let dateStr = run;
-                    if (parts.length === 3) {
-                        const yyyymmdd = parts[1];
-                        const hhmmss = parts[2];
-                        const year = yyyymmdd.substring(0, 4);
-                        const month = yyyymmdd.substring(4, 6);
-                        const day = yyyymmdd.substring(6, 8);
-                        const hour = hhmmss.substring(0, 2);
-                        const min = hhmmss.substring(2, 4);
-                        const sec = hhmmss.substring(4, 6);
-                        dateStr = `${day}/${month}/${year} às ${hour}:${min}:${sec}`;
-                    }
-
-                    item.innerHTML = `
-                        <div class="run-name">${run}</div>
-                        <div class="run-date">${dateStr}</div>
-                    `;
+                    item.innerHTML = `<div class="run-name">${run}</div>`;
                     item.onclick = () => selectRun(run, item);
                     list.appendChild(item);
                 });
@@ -842,73 +784,72 @@ if ($path === '/') {
             document.getElementById('welcomeView').style.display = 'none';
             document.getElementById('dashboardHeader').style.display = 'flex';
             document.getElementById('dashboardGrid').style.display = 'flex';
-            
             document.getElementById('runTitle').innerText = run;
             
             try {
-                const [slowRes, fastRes] = await Promise.all([
-                    fetch(`/api/file?path=${run}/slow/summary.json`),
-                    fetch(`/api/file?path=${run}/fast/summary.json`)
-                ]);
-                const slow = await slowRes.json();
-                const fast = await fastRes.json();
+                const res = await fetch(`/api/file?path=${run}/summary.json`);
+                const summary = await res.json();
                 
-                document.getElementById('metaWorkload').innerText = slow.workload.workload;
-                document.getElementById('metaScale').innerText = slow.workload.scale;
-                document.getElementById('metaRate').innerText = slow.workload.rate_requests_per_second + ' rps';
-                document.getElementById('metaDuration').innerText = Math.round(slow.measurement_window.duration_seconds) + 's';
+                const win = summary.measurement_window || {};
+                const energy = summary.energy || {};
+                const carbon = summary.carbon || {};
+                const workload = summary.workload || {};
                 
-                const slowLat = slow.workload.request_duration_ms.p95;
-                const fastLat = fast.workload.request_duration_ms.p95;
-                const latReduction = ((slowLat - fastLat) / slowLat * 100).toFixed(1);
+                document.getElementById('metaDuration').innerText = (win.duration_seconds ? win.duration_seconds.toFixed(2) + 's' : '-');
+                document.getElementById('metaPid').innerText = win.target_pid || '-';
+                document.getElementById('metaLang').innerText = (win.language ? win.language.toUpperCase() : 'PHP');
                 
-                document.getElementById('valLatencySlow').innerText = slowLat.toFixed(2) + ' ms';
-                document.getElementById('valLatencyFast').innerText = fastLat.toFixed(2) + ' ms';
-                document.getElementById('valLatencyPct').innerText = latReduction + '%';
+                if (workload && workload.workload) {
+                    document.getElementById('metaWorkloadBadge').style.display = 'inline-block';
+                    document.getElementById('metaWorkload').innerText = workload.workload;
+                } else {
+                    document.getElementById('metaWorkloadBadge').style.display = 'none';
+                }
                 
-                const slowEnergy = slow.energy.php_process_total_j;
-                const fastEnergy = fast.energy.php_process_total_j;
-                const energyReduction = ((slowEnergy - fastEnergy) / slowEnergy * 100).toFixed(1);
+                document.getElementById('valProcessEnergy').innerText = (energy.php_process_total_j || energy.process_total_j || 0).toFixed(4) + ' J';
+                document.getElementById('valProcessDynamic').innerText = (energy.php_process_dynamic_j || energy.process_dynamic_j || 0).toFixed(4) + ' J';
+                document.getElementById('valProcessPower').innerText = (energy.php_average_power_w || energy.process_average_power_w || 0).toFixed(4) + ' W';
                 
-                document.getElementById('valEnergySlow').innerText = slowEnergy.toFixed(4) + ' J';
-                document.getElementById('valEnergyFast').innerText = fastEnergy.toFixed(4) + ' J';
-                document.getElementById('valEnergyPct').innerText = energyReduction + '%';
+                document.getElementById('valHostEnergy').innerText = (energy.host_total_j || 0).toFixed(4) + ' J';
+                document.getElementById('valHostDynamic').innerText = (energy.host_dynamic_j || 0).toFixed(4) + ' J';
+                document.getElementById('valHostPower').innerText = (energy.host_average_power_w || 0).toFixed(4) + ' W';
                 
-                const slowCarbon = slow.carbon.php_process_total_g_co2e;
-                const fastCarbon = fast.carbon.php_process_total_g_co2e;
-                const carbonReduction = ((slowCarbon - fastCarbon) / slowCarbon * 100).toFixed(1);
+                const procCarbon = (carbon.php_process_total_g_co2e || carbon.process_total_g_co2e || 0);
+                document.getElementById('valCarbon').innerText = procCarbon.toFixed(6) + ' g';
+                document.getElementById('valCarbonProc').innerText = procCarbon.toFixed(6) + ' g';
+                document.getElementById('valCarbonHost').innerText = (carbon.host_total_g_co2e || 0).toFixed(6) + ' g';
                 
-                document.getElementById('valCarbonSlow').innerText = slowCarbon.toFixed(6) + ' g';
-                document.getElementById('valCarbonFast').innerText = fastCarbon.toFixed(6) + ' g';
-                document.getElementById('valCarbonPct').innerText = carbonReduction + '%';
+                if (workload && workload.successful_requests !== undefined && workload.successful_requests > 0) {
+                    document.getElementById('valRequests').innerText = workload.successful_requests;
+                    const p95 = workload.request_duration_ms ? workload.request_duration_ms.p95 : null;
+                    document.getElementById('valLatencyP95').innerText = p95 ? p95.toFixed(2) + ' ms' : 'N/A';
+                    const jPerReq = energy.php_j_per_successful_request || energy.process_j_per_successful_request;
+                    document.getElementById('valEnergyReq').innerText = jPerReq ? jPerReq.toFixed(6) + ' J' : 'N/A';
+                } else {
+                    document.getElementById('valRequests').innerText = 'Carga Externa';
+                    document.getElementById('valLatencyP95').innerText = 'N/A';
+                    document.getElementById('valEnergyReq').innerText = 'N/A';
+                }
                 
-                document.getElementById('valRequests').innerText = slow.workload.successful_requests;
-                document.getElementById('valPowerSlow').innerText = slow.energy.php_average_power_w.toFixed(4) + ' W';
-                document.getElementById('valPowerFast').innerText = fast.energy.php_average_power_w.toFixed(4) + ' W';
-                
-                renderFlamegraphs();
+                renderFlamegraph();
                 
             } catch (e) {
                 console.error("Erro ao carregar dados da rodada:", e);
             }
         }
 
-        function renderFlamegraphs() {
+        function renderFlamegraph() {
             if (!currentRun) return;
-            
-            const fgSlow = document.getElementById('fgSlow');
-            const fgFast = document.getElementById('fgFast');
-            
-            fgSlow.setAttribute('data', '');
-            fgFast.setAttribute('data', '');
+            const fgObject = document.getElementById('fgObject');
+            fgObject.setAttribute('data', '');
             
             setTimeout(() => {
                 if (currentType === 'cpu') {
-                    fgSlow.setAttribute('data', `/api/file?path=${currentRun}/slow/cpu-flamegraph.svg`);
-                    fgFast.setAttribute('data', `/api/file?path=${currentRun}/fast/cpu-flamegraph.svg`);
+                    document.getElementById('fgPanelTitle').innerText = 'Flamegraph de CPU (Amostras de Call Stacks)';
+                    fgObject.setAttribute('data', `/api/file?path=${currentRun}/cpu-flamegraph.svg`);
                 } else {
-                    fgSlow.setAttribute('data', `/api/file?path=${currentRun}/slow/energy-flamegraph.svg`);
-                    fgFast.setAttribute('data', `/api/file?path=${currentRun}/fast/energy-flamegraph.svg`);
+                    document.getElementById('fgPanelTitle').innerText = 'Flamegraph de Energia Atribuída (Microjoules)';
+                    fgObject.setAttribute('data', `/api/file?path=${currentRun}/energy-flamegraph.svg`);
                 }
             }, 50);
         }
@@ -917,7 +858,7 @@ if ($path === '/') {
             currentType = type;
             document.getElementById('tabBtnCpu').classList.toggle('active', type === 'cpu');
             document.getElementById('tabBtnEnergy').classList.toggle('active', type === 'energy');
-            renderFlamegraphs();
+            renderFlamegraph();
         }
 
         window.onload = loadRuns;
@@ -933,24 +874,20 @@ if ($path !== '/work') {
 }
 
 $workload = $_GET['workload'] ?? 'mixed';
-$implementation = $_GET['implementation'] ?? 'slow';
 $scale = positiveInt('scale', 1, MAX_SCALE);
 
-if (!in_array($workload, ['cpu', 'text', 'mixed'], true)) {
-    jsonResponse(['error' => 'Invalid workload. Use cpu, text or mixed.'], 400);
-}
-
-if (!in_array($implementation, ['slow', 'fast'], true)) {
-    jsonResponse(['error' => 'Invalid implementation. Use slow or fast.'], 400);
+if (!in_array($workload, ['cpu', 'text', 'mixed', 'wordpress'], true)) {
+    jsonResponse(['error' => 'Invalid workload. Use cpu, text, mixed or wordpress.'], 400);
 }
 
 $start = hrtime(true);
 $memoryBefore = memory_get_usage(true);
 
 $result = match ($workload) {
-    'cpu' => executeCpuWorkload($implementation, $scale),
-    'text' => executeTextWorkload($implementation, $scale),
-    default => executeMixedWorkload($implementation, $scale),
+    'cpu' => executeCpuWorkload($scale),
+    'text' => executeTextWorkload($scale),
+    'wordpress' => executeWordpressWorkload($scale),
+    default => executeMixedWorkload($scale),
 };
 
 $elapsedNanoseconds = hrtime(true) - $start;
@@ -958,7 +895,6 @@ $memoryAfter = memory_get_usage(true);
 
 jsonResponse([
     'workload' => $workload,
-    'implementation' => $implementation,
     'scale' => $scale,
     'duration_ms' => round($elapsedNanoseconds / 1_000_000, 3),
     'memory_delta_bytes' => $memoryAfter - $memoryBefore,

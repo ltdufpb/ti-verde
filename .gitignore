@@ -1,8 +1,13 @@
-*.json
-*.jfr
+# Resultados gerados de medição
+results/*
+!results/.gitkeep
+*.log
+
+# Caches e arquivos temporários
 __pycache__/
 *.pyc
 .venv/
 results/
 tools/
 cases/
+*.jfr

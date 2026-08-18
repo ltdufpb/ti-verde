@@ -1,7 +1,0 @@
-<main>;executeMixedWorkload;executeTextWorkload;countWordsFast 2
-<main>;executeMixedWorkload;executeTextWorkload;countWordsFast;normalizeSentence 1
-array_values 1
-<main>;executeMixedWorkload;executeTextWorkload;countWordsFast;normalizeSentence;preg_replace 1
-<main>;executeMixedWorkload;executeTextWorkload;countWordsFast;normalizeSentence;array_filter 1
-<main>;parse_url 1
-isPrimeFast 1
