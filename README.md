@@ -41,33 +41,36 @@ O sistema adota uma separação estrita de responsabilidades: **Medição** e **
 ```mermaid
 flowchart TD
     subgraph Configuração
-        ENV[config/experiment.env]
+        ENV["config/experiment.env"]
     end
 
     subgraph Host de Medição
-        METER[run-meter.sh\nEntrypoint do Medidor]
-        SCAPH[Scaphandre\nLeitura de Watts RAPL]
-        PROF[Profiler da Linguagem\nphpspy / async-profiler / py-spy]
-        APP[Aplicação Alvo\nLocal / Container Docker / Processo PID]
-        ANZ[analyze_measurement.py\nAtribuição Energética]
-        FG[FlameGraph.pl\nGerador SVG]
+        METER["run-meter.sh<br/>Entrypoint do Medidor"]
+        SCAPH["Scaphandre<br/>Leitura de Watts RAPL"]
+        PROF["Profiler da Linguagem<br/>phpspy / async-profiler / py-spy"]
+        APP["Aplicação Alvo<br/>Local / Container Docker / Processo PID"]
+        ANZ["analyze_measurement.py<br/>Atribuição Energética"]
+        FG["FlameGraph.pl<br/>Gerador SVG"]
     end
 
     subgraph Gerador de Carga Separado
-        K6[run-load-test.sh\nk6 Workload Engine]
+        K6["run-load-test.sh<br/>k6 Workload Engine"]
     end
 
-    ENV --> METER & K6
-    METER --> APP & SCAPH & PROF
-    K6 -.->|Requisições HTTP| APP
-    SCAPH -->|scaphandre.json\nMicrowatts / Tempo| ANZ
-    PROF -->|phpspy.txt\nCall Stacks + Timestamps| ANZ
-    K6 -.->|k6-summary.json (opcional)| ANZ
+    ENV --> METER
+    ENV --> K6
+    METER --> APP
+    METER --> SCAPH
+    METER --> PROF
+    K6 -.->|"Requisições HTTP"| APP
+    SCAPH -->|"scaphandre.json<br/>Microwatts / Tempo"| ANZ
+    PROF -->|"phpspy / profile.chrometrace / profile.jfr<br/>Call Stacks + Timestamps"| ANZ
+    K6 -.->|"k6-summary.json (opcional)"| ANZ
     ANZ --> FG
-    FG --> OUT1[cpu-flamegraph.svg]
-    FG --> OUT2[energy-flamegraph.svg]
-    ANZ --> OUT3[SUMMARY.md & summary.json]
-    ANZ --> OUT4[top-functions.csv & function-times.csv]
+    FG --> OUT1["cpu-flamegraph.svg"]
+    FG --> OUT2["energy-flamegraph.svg"]
+    ANZ --> OUT3["SUMMARY.md & summary.json"]
+    ANZ --> OUT4["top-functions.csv & function-times.csv"]
 ```
 
 ---
