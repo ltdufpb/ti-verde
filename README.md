@@ -178,15 +178,58 @@ Conecta os coletores diretamente a um processo existente no Linux através do se
 | `-m, --mode <mode>` | Modo de execução (`local`, `container`, `process`) | `local` |
 | `-c, --container <nome>` | Nome ou ID do container Docker (para modo container) | - |
 | `-p, --pid <pid>` | PID do processo alvo no Host (para modo process) | - |
+| `--port <porta>` | Porta TCP para execução do servidor no modo local | `8080` |
+| `--host <host>` | Endereço de host para o servidor local | `127.0.0.1` |
 | `--app-cmd <comando>` | Comando customizado para iniciar a aplicação localmente | - |
 | `-d, --duration <seg>` | Duração da janela de medição em segundos | `60` |
 | `-b, --baseline <seg>` | Duração da medição em repouso (*baseline*) | `15` |
 | `-o, --output <dir>` | Diretório customizado de saída para os resultados | `results/...` |
-| `--prefix <prefixo>` | Filtra funções no relatório pelo prefixo do pacote | - |
-| `--project-root <dir>` | Raiz do código para qualificação dos frames de chamada | - |
+| `--prefix, --application-prefix <pref>` | Filtra funções no relatório pelo prefixo do pacote/módulo | - |
+| `--project-root <dir>` | Raiz do código-fonte para qualificação dos frames | - |
 | `--config <arquivo>` | Caminho do arquivo de configuração `.env` | `config/experiment.env` |
 | `--k6 <arquivo>` | Caminho do resumo gerado pelo k6 (`k6-summary.json`) | `results/k6-summary.json` |
 
+---
+
+## 🎯 Filtro de Escopo da Aplicação (Application Scope Filtering)
+
+Em ecossistemas modernos (Laravel, Django, FastAPI, Spring Boot), grande parte das chamadas capturadas pelos profilers pertence à infraestrutura (middlewares, roteamento, serializadores, ORMs, chamadas de sistema como `select()`).
+
+Para guiar a **refatoração verde (*Green Refactoring*)**, o medidor possui um mecanismo de **filtro de escopo** que isola as funções de negócio da aplicação:
+
+### Como Utilizar:
+
+Passe as flags `--project-root` e `--application-prefix` no momento da medição:
+
+```bash
+# Python: foca apenas nas funções do módulo 'myapp'
+./run-meter.sh --language python --mode local \
+  --project-root . \
+  --application-prefix "myapp"
+
+# Java: foca apenas no pacote 'com.minhaempresa.servico'
+./run-meter.sh --language java --mode local \
+  --application-prefix "com.minhaempresa.servico"
+
+# PHP: foca apenas no namespace 'App\'
+./run-meter.sh --language php --mode local \
+  --project-root . \
+  --application-prefix "App\\"
+```
+
+Ou configure permanentemente no arquivo `config/experiment.env`:
+```env
+APPLICATION_PREFIX=myapp
+PROJECT_ROOT=/caminho/do/projeto
+```
+
+### Como Interpretar os Relatórios (`SUMMARY.md` e `top-functions.csv`):
+
+| Métrica | Significado | Como Usar na Otimização |
+|---|---|---|
+| **Self Energy (J)** | Energia consumida **diretamente dentro do corpo da função** (excluindo chamadas filhas). | **Alvo nº 1 de otimização algorítmica**. Indica quais funções gastam mais CPU ativa internamente. |
+| **Inclusive Energy (J)** | Energia da função **mais** toda a cadeia de chamadas que ela disparou. | **Alvo de otimização de arquitetura/fluxo**. Indica quais rotas ou controllers acumulam mais custo elétrico total. |
+| **Average Time (ms/req)** | Latência média adicionada à requisição por aquela função. | Ajuda a verificar se a lentidão da API está diretamente associada ao alto consumo de Joules. |
 
 ---
 
@@ -201,8 +244,8 @@ O script `run-load-test.sh` executa o `k6` de forma independente:
 # Executar workload sintético específico (cpu, text, mixed)
 ./run-load-test.sh cpu
 
-# Executar apontando para outro IP / porta na rede com taxa e duração customizadas
-./run-load-test.sh --url http://192.168.1.50:8080 --rate 5 --duration 60 --workload wordpress
+# Executar apontando para porta e taxa customizadas com carga mais intensa
+./run-load-test.sh cpu --url http://127.0.0.1:8000 --rate 20 --scale 5 --duration 30
 ```
 
 ### Opções do `run-load-test.sh`:

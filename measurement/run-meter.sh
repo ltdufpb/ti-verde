@@ -110,6 +110,18 @@ while [[ $# -gt 0 ]]; do
       PROJECT_ROOT="$2"
       shift 2
       ;;
+    --port)
+      PORT="$2"
+      shift 2
+      ;;
+    --host)
+      HOST="$2"
+      shift 2
+      ;;
+    -u|--url|--base-url)
+      BASE_URL="$2"
+      shift 2
+      ;;
     --app-cmd|--start-cmd)
       APP_CMD="$2"
       shift 2
@@ -340,18 +352,24 @@ case "$TARGET_MODE" in
     echo "==> Aguardando servidor ficar online em ${BASE_URL}..."
     SERVER_ONLINE=0
     for _ in $(seq 1 50); do
+      if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+        echo "Erro: O processo do servidor local (PID $SERVER_PID) encerrou prematuramente." >&2
+        if [[ -s "$SERVER_LOG" ]]; then
+          echo "--- Detalhes do erro em $SERVER_LOG ---" >&2
+          cat "$SERVER_LOG" >&2
+          echo "----------------------------------------" >&2
+        fi
+        exit 1
+      fi
       if curl -fsS "${BASE_URL}/health" >/dev/null 2>&1 || curl -fsS "${BASE_URL}/" >/dev/null 2>&1; then
         SERVER_ONLINE=1
-        break
-      fi
-      if ! kill -0 "$SERVER_PID" 2>/dev/null; then
         break
       fi
       sleep 0.2
     done
 
     if [[ "$SERVER_ONLINE" -ne 1 ]]; then
-      echo "Erro: Servidor falhou ao iniciar ou não respondeu em ${BASE_URL}. Verifique $SERVER_LOG" >&2
+      echo "Erro: Servidor falhou ao responder em ${BASE_URL}. Verifique $SERVER_LOG" >&2
       exit 1
     fi
     ;;
@@ -489,11 +507,15 @@ case "$TARGET_LANG" in
   python)
     echo "==> Iniciando py-spy no PID $TARGET_PID..."
     PYSPY_START_TIME="$(python3 -c 'import time; print(time.time())')"
+    PYSPY_EXTRA_ARGS=()
+    if [[ "${PYSPY_INCLUDE_IDLE:-false}" == "true" ]]; then
+      PYSPY_EXTRA_ARGS+=(--idle)
+    fi
     sudo "$PYSPY" record \
       --pid "$TARGET_PID" \
       --duration "$COLLECTOR_TIMEOUT" \
       --format chrometrace \
-      --idle \
+      "${PYSPY_EXTRA_ARGS[@]}" \
       --rate "${PYSPY_RATE_HZ:-100}" \
       --output "$PROFILER_FILE" \
       2>"$PROFILER_ERR" &

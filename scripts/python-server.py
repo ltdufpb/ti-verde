@@ -201,6 +201,10 @@ class RequestHandler(BaseHTTPRequestHandler):
         pass
 
 
+class ReusableHTTPServer(HTTPServer):
+    allow_reuse_address = True
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Green Python Lab Test Server")
     parser.add_argument("--host", default="127.0.0.1", help="Host binding (default: 127.0.0.1)")
@@ -208,7 +212,7 @@ def main() -> None:
     args = parser.parse_args()
 
     server_address = (args.host, args.port)
-    httpd = HTTPServer(server_address, RequestHandler)
+    httpd = ReusableHTTPServer(server_address, RequestHandler)
     print(f"Starting Green Python Lab at http://{args.host}:{args.port}")
     try:
         httpd.serve_forever()

@@ -151,11 +151,15 @@ case "$LANGUAGE" in
     PYSPY_ERR="$RUN_DIR/pyspy.stderr.log"
     echo "Starting py-spy..."
     PYSPY_START_TIME="$(python3 -c 'import time; print(time.time())')"
+    PYSPY_EXTRA_ARGS=()
+    if [[ "${PYSPY_INCLUDE_IDLE:-false}" == "true" ]]; then
+      PYSPY_EXTRA_ARGS+=(--idle)
+    fi
     sudo "$PYSPY" record \
       --pid "$TARGET_PID" \
       --duration "$COLLECTOR_TIMEOUT" \
       --format chrometrace \
-      --idle \
+      "${PYSPY_EXTRA_ARGS[@]}" \
       --rate "${PYSPY_RATE_HZ:-100}" \
       --output "$PYSPY_FILE" \
       2>"$PYSPY_ERR" &
