@@ -1,0 +1,56 @@
+[
+  {
+    "name": "root_task",
+    "ph": "B",
+    "ts": 100000,
+    "pid": 123,
+    "tid": 1,
+    "args": {
+      "filename": "/app/server.py"
+    }
+  },
+  {
+    "name": "execute_cpu",
+    "ph": "B",
+    "ts": 200000,
+    "pid": 123,
+    "tid": 1,
+    "args": {
+      "filename": "/app/server.py"
+    }
+  },
+  {
+    "name": "is_prime",
+    "ph": "B",
+    "ts": 300000,
+    "pid": 123,
+    "tid": 1,
+    "args": {
+      "filename": "/app/server.py"
+    }
+  },
+  {
+    "name": "is_prime",
+    "ph": "E",
+    "ts": 1500000,
+    "pid": 123,
+    "tid": 1,
+    "args": {}
+  },
+  {
+    "name": "execute_cpu",
+    "ph": "E",
+    "ts": 1800000,
+    "pid": 123,
+    "tid": 1,
+    "args": {}
+  },
+  {
+    "name": "root_task",
+    "ph": "E",
+    "ts": 1900000,
+    "pid": 123,
+    "tid": 1,
+    "args": {}
+  }
+]

@@ -72,17 +72,17 @@ flowchart TD
 
 ---
 
-## 🌐 Pronto para Fusão Multi-Linguagem (PHP, Java, Python)
+## 🌐 Suporte Multi-Linguagem Integrado (PHP, Java, Python)
 
-O medidor foi arquitetado para unificar três ecossistemas em uma interface padronizada:
+O medidor unifica os três ecossistemas em uma interface padronizada de linha de comando:
 
 ```bash
 ./run-meter.sh --language <php|java|python> --mode <local|container|process>
 ```
 
-- **PHP** *(Ativo)*: Utiliza amostragem via `phpspy` a 99 Hz + Scaphandre RAPL.
-- **Java** *(Preparado para o merge)*: Integrará `async-profiler` / JVM RAPL.
-- **Python** *(Preparado para o merge)*: Integrará `py-spy` / Austin.
+- **PHP** *(Ativo)*: Utiliza amostragem de pilhas de execução via `phpspy` a 99 Hz + medição RAPL com Scaphandre.
+- **Java** *(Ativo)*: Utiliza perfilamento nativo da JVM via `async-profiler` (formato JFR) + parser JDK `jfr` + medição RAPL.
+- **Python** *(Ativo)*: Utiliza amostragem de pilhas em tempo real via `py-spy` (formato chrometrace) + medição RAPL.
 
 ---
 
@@ -102,8 +102,16 @@ Confirme que o hardware e o kernel atendem a todos os requisitos:
 
 ### 3. Iniciar o Medidor (Terminal 1)
 Inicie a medição informando a linguagem e o modo desejado:
+
 ```bash
-./run-meter.sh -l php -m local
+# Exemplo 1: Aplicação PHP local
+./run-meter.sh --language php --mode local
+
+# Exemplo 2: Aplicação Python local
+./run-meter.sh --language python --mode local
+
+# Exemplo 3: Aplicação Java local
+./run-meter.sh --language java --mode local
 ```
 *O script coletará o consumo em repouso (baseline) e abrirá a janela de medição pelo tempo configurado.*
 
@@ -113,31 +121,51 @@ Durante a janela de medição aberta no Terminal 1, envie o tráfego de carga:
 ./run-load-test.sh
 ```
 
-Ao término, os relatórios completos e Flamegraphs estarão disponíveis no diretório `results/php-local-YYYYMMDD-HHMMSS/`.
+Ao término, os relatórios completos e Flamegraphs estarão disponíveis no diretório `results/<linguagem>-<modo>-YYYYMMDD-HHMMSS/`.
 
 ---
 
 ## 🎯 Modos de Execução do Medidor (`run-meter.sh`)
 
-O medidor suporta três formas de execução:
+O medidor suporta três formas de execução para **PHP**, **Java** e **Python**:
 
-### 1. Modo Local (`-m local`)
-Inicia automaticamente o servidor embutido local da aplicação e anexa o profiler ao processo criado:
+### 1. Modo Local (`--mode local`)
+Inicia automaticamente o servidor de aplicação local e anexa o profiler ao processo criado:
 ```bash
-./run-meter.sh -l php -m local
+# PHP (servidor embutido)
+./run-meter.sh --language php --mode local
+
+# Python (servidor de teste padrão ou customizado via --app-cmd)
+./run-meter.sh --language python --mode local
+
+# Java (servidor de teste padrão ou customizado via --app-cmd)
+./run-meter.sh --language java --mode local
 ```
 
-### 2. Modo Container Docker (`-m container`)
+### 2. Modo Container Docker (`--mode container`)
 Identifica o PID do container no Host Linux através de `docker inspect` e monitora o container diretamente pelo Host:
 ```bash
-# Exemplo com WordPress ou qualquer container PHP
-./run-meter.sh -l php -m container -c nome_do_container_php
+# Container PHP (ex: WordPress, Laravel, etc.)
+./run-meter.sh --language php --mode container -c nome_container_php
+
+# Container Python (ex: FastAPI, Django, Flask)
+./run-meter.sh --language python --mode container -c nome_container_python
+
+# Container Java (ex: Spring Boot, Quarkus)
+./run-meter.sh --language java --mode container -c nome_container_java
 ```
 
-### 3. Modo Processo Específico (`-m process`)
+### 3. Modo Processo Específico (`--mode process`)
 Conecta os coletores diretamente a um processo existente no Linux através do seu PID:
 ```bash
-./run-meter.sh -l php -m process -p 12345
+# Processo PHP
+./run-meter.sh --language php --mode process -p 12345
+
+# Processo Python
+./run-meter.sh --language python --mode process -p 23456
+
+# Processo Java (JVM)
+./run-meter.sh --language java --mode process -p 34567
 ```
 
 ### Opções do `run-meter.sh`:
@@ -146,11 +174,16 @@ Conecta os coletores diretamente a um processo existente no Linux através do se
 | `-l, --language <lang>` | Linguagem da aplicação (`php`, `java`, `python`) | `php` |
 | `-m, --mode <mode>` | Modo de execução (`local`, `container`, `process`) | `local` |
 | `-c, --container <nome>` | Nome ou ID do container Docker (para modo container) | - |
-| `-p, --pid <pid>` | PID do processo alvo (para modo process) | - |
+| `-p, --pid <pid>` | PID do processo alvo no Host (para modo process) | - |
+| `--app-cmd <comando>` | Comando customizado para iniciar a aplicação localmente | - |
 | `-d, --duration <seg>` | Duração da janela de medição em segundos | `60` |
 | `-b, --baseline <seg>` | Duração da medição em repouso (*baseline*) | `15` |
 | `-o, --output <dir>` | Diretório customizado de saída para os resultados | `results/...` |
+| `--prefix <prefixo>` | Filtra funções no relatório pelo prefixo do pacote | - |
+| `--project-root <dir>` | Raiz do código para qualificação dos frames de chamada | - |
 | `--config <arquivo>` | Caminho do arquivo de configuração `.env` | `config/experiment.env` |
+| `--k6 <arquivo>` | Caminho do resumo gerado pelo k6 (`k6-summary.json`) | `results/k6-summary.json` |
+
 
 ---
 

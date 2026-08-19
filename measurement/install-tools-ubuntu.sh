@@ -25,6 +25,7 @@ sudo apt-get install -y \
   build-essential \
   ca-certificates \
   curl \
+  default-jdk-headless \
   git \
   gnupg \
   jq \
@@ -35,7 +36,7 @@ sudo apt-get install -y \
   wget
 
 echo "Installing py-spy..."
-pip install py-spy --break-system-packages
+pip install py-spy --break-system-packages || python3 -m pip install py-spy --break-system-packages
 
 echo "Installing k6..."
 curl -fsSL https://dl.k6.io/key.gpg |
@@ -129,7 +130,7 @@ if [[ ! -d "$TOOLS_DIR/FlameGraph/.git" ]]; then
 fi
 
 echo "Installing async-profiler..."
-ASPROF_VERSION="4.4"
+ASPROF_VERSION="4.5"
 if [[ ! -x "$TOOLS_DIR/async-profiler/bin/asprof" ]]; then
   rm -rf "$TOOLS_DIR/async-profiler"
   case "$(uname -m)" in

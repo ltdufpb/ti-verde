@@ -8,7 +8,7 @@ fail() {
   exit 1
 }
 
-echo "== Green PHP Lab environment check =="
+echo "== Green Energy Lab Environment Check =="
 
 [[ "$(uname -s)" == "Linux" ]] || fail "This workflow requires Linux."
 
@@ -16,7 +16,7 @@ if grep -qiE 'microsoft|wsl' /proc/version 2>/dev/null; then
   fail "WSL detected. Use native Linux on the physical computer."
 fi
 
-for command in php curl python3 scaphandre perl; do
+for command in curl python3 scaphandre perl; do
   command -v "$command" >/dev/null 2>&1 ||
     fail "Missing command: $command. Run measurement/install-tools-ubuntu.sh."
 done
@@ -25,15 +25,43 @@ if ! command -v k6 >/dev/null 2>&1; then
   echo "INFO: 'k6' não está instalado localmente. (Necessário apenas para executar testes de carga locais via run-load-test.sh)"
 fi
 
-[[ -x "$PROJECT_DIR/tools/phpspy/phpspy" ]] ||
-  fail "phpspy is not built."
-
 [[ -f "$PROJECT_DIR/tools/FlameGraph/flamegraph.pl" ]] ||
-  fail "FlameGraph is missing."
+  fail "FlameGraph is missing in tools/FlameGraph."
 
-THREAD_SAFETY="$(php -i 2>/dev/null | awk -F'=> ' '/Thread Safety/ {print tolower($2); exit}')"
-if [[ "$THREAD_SAFETY" == "enabled" ]]; then
-  fail "phpspy requires non-ZTS PHP, but Thread Safety is enabled."
+echo "== Verificando ecossistema PHP =="
+if command -v php >/dev/null 2>&1; then
+  THREAD_SAFETY="$(php -i 2>/dev/null | awk -F'=> ' '/Thread Safety/ {print tolower($2); exit}')"
+  if [[ "$THREAD_SAFETY" == "enabled" ]]; then
+    echo "AVISO: PHP Thread Safety está habilitado (phpspy requer PHP Non-ZTS)."
+  fi
+  if [[ -x "$PROJECT_DIR/tools/phpspy/phpspy" ]]; then
+    echo "  [OK] PHP CLI + phpspy disponíveis"
+  else
+    echo "  [AVISO] phpspy não encontrado em tools/phpspy/phpspy. Execute measurement/install-tools-ubuntu.sh para compilar."
+  fi
+else
+  echo "  [INFO] php CLI não instalado."
+fi
+
+echo "== Verificando ecossistema Python =="
+if command -v py-spy >/dev/null 2>&1; then
+  echo "  [OK] Python 3 + py-spy ($(py-spy --version 2>/dev/null || echo 'instalado'))"
+else
+  echo "  [AVISO] py-spy não encontrado. Instale com: pip install py-spy --break-system-packages"
+fi
+
+echo "== Verificando ecossistema Java =="
+ASPROF="$PROJECT_DIR/tools/async-profiler/bin/asprof"
+if [[ -x "$ASPROF" ]] || command -v asprof >/dev/null 2>&1; then
+  echo "  [OK] async-profiler (asprof) disponível"
+else
+  echo "  [AVISO] async-profiler (asprof) não encontrado. Execute measurement/install-tools-ubuntu.sh."
+fi
+
+if command -v jfr >/dev/null 2>&1; then
+  echo "  [OK] JDK JFR CLI disponível"
+else
+  echo "  [INFO] Comando 'jfr' não encontrado (necessário para profiling Java nativo)."
 fi
 
 sudo -v
@@ -63,8 +91,12 @@ python3 "$PROJECT_DIR/measurement/analyze_measurement.py" \
 "$PROJECT_DIR/measurement/test-analyzer.sh"
 
 echo
-echo "Environment is ready."
-echo "PHP:        $(php -v | head -n 1)"
-echo "k6:         $(k6 version 2>/dev/null | head -n 1 || echo 'não instalado (opcional no host de medição)')"
-echo "Scaphandre: $(scaphandre --version 2>/dev/null || echo installed)"
-echo "phpspy:     $("$PROJECT_DIR/tools/phpspy/phpspy" -v 2>/dev/null || echo built)"
+echo "Environment check completed successfully."
+echo "PHP:            $(php -v 2>/dev/null | head -n 1 || echo 'não instalado')"
+echo "Python:         $(python3 --version 2>/dev/null || echo 'não instalado')"
+echo "py-spy:         $(py-spy --version 2>/dev/null || echo 'não instalado')"
+echo "Java:           $(java -version 2>&1 | head -n 1 || echo 'não instalado')"
+echo "async-profiler: $($PROJECT_DIR/tools/async-profiler/bin/asprof --version 2>/dev/null || asprof --version 2>/dev/null || echo 'não instalado')"
+echo "k6:             $(k6 version 2>/dev/null | head -n 1 || echo 'não instalado (opcional no host de medição)')"
+echo "Scaphandre:     $(scaphandre --version 2>/dev/null || echo installed)"
+
