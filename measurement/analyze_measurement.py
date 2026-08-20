@@ -423,6 +423,12 @@ def main() -> None:
     if args.pyspy and args.start_time is None:
         parser.error("--start-time is required when using --pyspy.")
 
+    if not args.application_prefix:
+        parser.error("--application-prefix is required.")
+
+    if not args.jfr and not args.project_root:
+        parser.error("--project-root is required when using --phpspy or --pyspy.")
+
     output_dir: Path = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -486,14 +492,15 @@ def main() -> None:
         unattributed_time_s,
     ) = attribute_energy_to_stacks(process_points, samples, target_pid)
 
-    if args.application_prefix:
-        from application_scope import summarize_by_scope
+    from application_scope import summarize_by_scope, truncate_stacks_to_scope
 
-        prefixes = (args.application_prefix,)
-        self_energy = summarize_by_scope(self_energy, prefixes)
-        inclusive_energy = summarize_by_scope(inclusive_energy, prefixes)
-        self_time = summarize_by_scope(self_time, prefixes)
-        inclusive_time = summarize_by_scope(inclusive_time, prefixes)
+    prefixes = (args.application_prefix,)
+    self_energy = summarize_by_scope(self_energy, prefixes)
+    inclusive_energy = summarize_by_scope(inclusive_energy, prefixes)
+    self_time = summarize_by_scope(self_time, prefixes)
+    inclusive_time = summarize_by_scope(inclusive_time, prefixes)
+    energy_stacks = truncate_stacks_to_scope(energy_stacks, prefixes)
+    cpu_stacks = truncate_stacks_to_scope(cpu_stacks, prefixes)
 
     energy_folded = output_dir / "energy.folded"
     cpu_folded = output_dir / "cpu.folded"
@@ -729,11 +736,10 @@ def main() -> None:
         f"- Unattributed {language} energy: **{unattributed_uj / 1_000_000:.6f} J**",
     ]
 
-    if args.application_prefix:
-        lines.append(
-            f"- Note: results filtered to functions matching `{args.application_prefix}`; "
-            "framework/infrastructure functions were excluded from the tables below."
-        )
+    lines.append(
+        f"- Note: results filtered to functions matching `{args.application_prefix}`; "
+        "framework/infrastructure overhead is grouped as `[framework/language overhead]` below."
+    )
 
     lines.extend([
         "",
@@ -791,4 +797,3 @@ if __name__ == "__main__":
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         raise
-    

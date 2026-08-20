@@ -23,7 +23,7 @@ APP_CMD="${APP_CMD:-}"
 
 usage() {
   cat <<EOF
-Uso: $(basename "$0") -l <LINGUAGEM> -m <MODO> [OPÇÕES]
+Uso: $(basename "$0") -l <LINGUAGEM> -m <MODO> --application-prefix <PREFIXO> [OPÇÕES]
 
 Medidor universal de consumo de energia e perfilamento de hardware (Scaphandre + Profilers).
 Suporta arquitetura multi-linguagem: PHP (phpspy), Java (async-profiler/JFR) e Python (py-spy).
@@ -44,27 +44,27 @@ Opções de Medição e Escopo:
   -d, --duration <SEGUNDOS>         Duração da janela de medição em segundos (padrão: $TARGET_DURATION)
   -b, --baseline <SEGUNDOS>         Duração da coleta em repouso/baseline em segundos (padrão: $TARGET_BASELINE)
   -o, --output <DIRETÓRIO>          Diretório customizado de saída para os resultados
-  --prefix, --application-prefix <PREFIXO>  Filtrar funções pelo prefixo do pacote/módulo
-  --project-root <DIRETÓRIO>        Raiz do código-fonte para qualificação dos frames
+  --prefix, --application-prefix <PREFIXO>  OBRIGATÓRIO. Filtra funções pelo prefixo do pacote/módulo
+                                             (ex: "com/minhaempresa/servico" para Java, "meuapp." para Python,
+                                             "App\\" para PHP)
+  --project-root <DIRETÓRIO>        Raiz do código-fonte para qualificação dos frames.
+                                     OBRIGATÓRIO para --language php e --language python
+                                     (Java já vem qualificado nativamente pela JVM)
   --k6 <ARQUIVO>                    Caminho do arquivo k6-summary.json gerado pelo teste de carga
   --config <ARQUIVO>                Arquivo de configuração .env (padrão: config/experiment.env)
   -h, --help                        Exibe esta ajuda
 
 Exemplos:
-  # 1. Medir aplicação local (inicia servidor PHP, Python ou Java automaticamente):
-  $(basename "$0") --language php --mode local
-  $(basename "$0") --language python --mode local
-  $(basename "$0") --language java --mode local
+  # 1. Medir aplicação local Java (inicia servidor, filtra por pacote):
+  $(basename "$0") --language java --mode local --application-prefix "com/minhaempresa/servico"
 
-  # 2. Medir aplicação em container Docker:
-  $(basename "$0") --language php --mode container -c wp_php
-  $(basename "$0") --language python --mode container -c fastapi_app
-  $(basename "$0") --language java --mode container -c spring_app
+  # 2. Medir aplicação em container Docker Python:
+  $(basename "$0") --language python --mode container -c fastapi_app \\
+    --project-root /caminho/do/projeto --application-prefix "meuapp."
 
-  # 3. Medir processo específico por PID existente:
-  $(basename "$0") --language php --mode process -p 12345
-  $(basename "$0") --language python --mode process -p 67890
-  $(basename "$0") --language java --mode process -p 54321
+  # 3. Medir processo PHP específico por PID existente:
+  $(basename "$0") --language php --mode process -p 12345 \\
+    --project-root /caminho/do/projeto --application-prefix "App\\\\"
 EOF
   exit 0
 }
@@ -184,6 +184,19 @@ case "$TARGET_MODE" in
     exit 1
     ;;
 esac
+
+# Validação do filtro de escopo — sempre obrigatório, em qualquer linguagem/modo
+if [[ -z "$APPLICATION_PREFIX" ]]; then
+  echo "Erro: --application-prefix é obrigatório. Use --help para ver exemplos." >&2
+  exit 1
+fi
+
+# --project-root só é usado por phpspy/py-spy para qualificar nomes de frame;
+# JFR (Java) já entrega nomes de classe totalmente qualificados pela JVM.
+if [[ "$TARGET_LANG" != "java" && -z "$PROJECT_ROOT" ]]; then
+  echo "Erro: --project-root é obrigatório para --language php ou --language python." >&2
+  exit 1
+fi
 
 # Diretório de resultados
 if [[ -n "$CUSTOM_OUTPUT_DIR" ]]; then
@@ -591,6 +604,7 @@ ANALYZE_ARGS=(
   --carbon-intensity "${CARBON_INTENSITY_G_PER_KWH:-100}"
   --flamegraph-script "$FLAMEGRAPH"
   --output-dir "$RUN_DIR"
+  --application-prefix "$APPLICATION_PREFIX"
 )
 
 if [[ -f "$BASELINE_FILE" ]]; then
@@ -613,10 +627,6 @@ if [[ -f "$K6_SUMMARY" ]]; then
   ANALYZE_ARGS+=(--k6 "$K6_SUMMARY")
 fi
 
-if [[ -n "$APPLICATION_PREFIX" ]]; then
-  ANALYZE_ARGS+=(--application-prefix "$APPLICATION_PREFIX")
-fi
-
 if [[ -n "$PROJECT_ROOT" ]]; then
   ANALYZE_ARGS+=(--project-root "$PROJECT_ROOT")
 fi
@@ -635,4 +645,3 @@ echo " Top funções:        $RUN_DIR/top-functions.csv"
 echo " Resumo JSON:        $RUN_DIR/summary.json"
 echo " RESULT_DIR=$RUN_DIR"
 echo "=========================================================================="
-
