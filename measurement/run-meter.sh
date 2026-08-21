@@ -431,6 +431,12 @@ case "$TARGET_MODE" in
         else
           echo "Anexando ao PID do container: $TARGET_PID"
         fi
+        # async-profiler usa o mecanismo de attach dinâmico da JVM (socket em
+        # /tmp/.java_pid<NSpid>), que não é alcançável a partir do host quando
+        # o alvo está em outro mount namespace (container). Precisamos do PID
+        # como a própria JVM o enxerga (NSpid) para rodar o asprof via
+        # `docker exec`, dentro do namespace do container.
+        CONTAINER_JAVA_NSPID=$(awk '/^NSpid:/ {print $NF}' "/proc/$TARGET_PID/status" 2>/dev/null || true)
         ;;
     esac
     ;;
@@ -535,13 +541,26 @@ case "$TARGET_LANG" in
     PROFILER_PID=$!
     ;;
   java)
-    echo "==> Iniciando async-profiler (asprof) no PID $TARGET_PID..."
-    sudo "$ASPROF" \
-      -d "$COLLECTOR_TIMEOUT" \
-      -f "$PROFILER_FILE" \
-      "$TARGET_PID" \
-      2>"$PROFILER_ERR" &
-    PROFILER_PID=$!
+    if [[ "$TARGET_MODE" == "container" && -n "${CONTAINER_JAVA_NSPID:-}" ]]; then
+      echo "==> Iniciando async-profiler (asprof) via docker exec no container '$CONTAINER_NAME' (NSpid $CONTAINER_JAVA_NSPID)..."
+      CONTAINER_ASPROF_DIR="/tmp/.run-meter-asprof"
+      docker cp "$(dirname "$(dirname "$ASPROF")")" "$CONTAINER_NAME:$CONTAINER_ASPROF_DIR"
+      docker exec "$CONTAINER_NAME" \
+        "$CONTAINER_ASPROF_DIR/bin/asprof" \
+        -d "$COLLECTOR_TIMEOUT" \
+        -f /tmp/.run-meter-profile.jfr \
+        "$CONTAINER_JAVA_NSPID" \
+        2>"$PROFILER_ERR" &
+      PROFILER_PID=$!
+    else
+      echo "==> Iniciando async-profiler (asprof) no PID $TARGET_PID..."
+      sudo "$ASPROF" \
+        -d "$COLLECTOR_TIMEOUT" \
+        -f "$PROFILER_FILE" \
+        "$TARGET_PID" \
+        2>"$PROFILER_ERR" &
+      PROFILER_PID=$!
+    fi
     ;;
 esac
 
@@ -595,6 +614,15 @@ SCAPH_PID=""
 if [[ -n "$PROFILER_PID" ]]; then
   wait "$PROFILER_PID" || true
   PROFILER_PID=""
+fi
+
+if [[ "$TARGET_LANG" == "java" && "$TARGET_MODE" == "container" && -n "${CONTAINER_JAVA_NSPID:-}" ]]; then
+  echo "==> Copiando profile.jfr do container '$CONTAINER_NAME'..."
+  docker cp "$CONTAINER_NAME:/tmp/.run-meter-profile.jfr" "$PROFILER_FILE" 2>>"$PROFILER_ERR" || true
+  # Best-effort: algumas imagens (ex: Cloud Native Buildpacks) não têm `rm` no PATH.
+  # Sem shell/coreutils garantidos, não há como limpar de forma portável — os arquivos
+  # somem quando o container for removido.
+  docker exec "$CONTAINER_NAME" rm -rf /tmp/.run-meter-asprof /tmp/.run-meter-profile.jfr >/dev/null 2>&1 || true
 fi
 
 echo "Analisando resultados..."
