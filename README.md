@@ -12,12 +12,15 @@ Ele integra medição direta de hardware via contadores Intel/AMD RAPL (**Scapha
 3. [Pronto para Fusão Multi-Linguagem (PHP, Java, Python)](#-pronto-para-fusão-multi-linguagem-php-java-python)
 4. [Guia de Início Rápido (Quickstart)](#-guia-de-início-rápido-quickstart)
 5. [Modos de Execução do Medidor (`run-meter.sh`)](#-modos-de-execução-do-medidor-run-metersh)
-6. [Execução Separada do Teste de Carga (`run-load-test.sh`)](#-execução-separada-do-teste-de-carga-run-load-testsh)
-7. [Painel Visual Interativo](#-painel-visual-interativo)
-8. [Configuração (`config/experiment.env`)](#-configuração-configexperimentenv)
-9. [Estrutura do Repositório](#-estrutura-do-repositório)
-10. [Calculadora de Carbono (`carbon.py`)](#-calculadora-de-carbono-carbonpy)
-11. [Boas Práticas de Medição](#-boas-práticas-de-medição)
+6. [🐳 Suporte a Containers Docker e Pools Multi-Processo (PHP-FPM)](#-suporte-a-containers-docker-e-pools-multi-processo-php-fpm)
+7. [📚 Estudo de Caso: Medindo o BookStack (Laravel + Docker + MariaDB)](#-estudo-de-caso-medindo-o-bookstack-laravel--docker--mariadb)
+8. [Filtro de Escopo da Aplicação (Application Scope Filtering)](#-filtro-de-escopo-da-aplicação-application-scope-filtering)
+9. [Execução Separada do Teste de Carga (`run-load-test.sh` / `k6`)](#-execução-separada-do-teste-de-carga-run-load-testsh)
+10. [Painel Visual Interativo](#-painel-visual-interativo)
+11. [Configuração (`config/experiment.env`)](#-configuração-configexperimentenv)
+12. [Estrutura do Repositório](#-estrutura-do-repositório)
+13. [Calculadora de Carbono (`carbon.py`)](#-calculadora-de-carbono-carbonpy)
+14. [Boas Práticas de Medição](#-boas-práticas-de-medição)
 
 ---
 
@@ -191,6 +194,102 @@ Conecta os coletores diretamente a um processo existente no Linux através do se
 
 ---
 
+## 🐳 Suporte a Containers Docker e Pools Multi-Processo (PHP-FPM)
+
+Em aplicações PHP de produção (Laravel, WordPress, BookStack, Drupal), o servidor opera tipicamente através de um gerenciador de processos como o **PHP-FPM** operando em modo dinâmico (`pm = dynamic` ou `pm = ondemand`), frequentemente orquestrado por supervisores de container como **s6-overlay**, **systemd**, **supervisord** ou **tini**.
+
+### O Desafio da Reciclagem de Processos (*Worker Recycling*)
+Conforme a carga de requisições varia e ultrapassa os limites configurados (`pm.max_requests` ou concorrência do `k6`):
+1. O PHP-FPM cria e destrói processos workers dinamicamente.
+2. Anexar o profiler a um único PID efêmero (`-p PID`) faz com que o perfilamento seja **interrompido abruptamente** assim que aquele worker específico é reciclado.
+3. Se houver um vácuo de amostragem durante o encerramento do processo, algoritmos ingênuos de interpolação trapezoidal podem esticar linearmente a energia de dezenas de segundos sobre as poucas funções capturadas nos momentos finais, distorcendo os relatórios e inflando métricas.
+
+### 🛠 O que foi Implementado e Corrigido no Medidor:
+
+1. **Profiling Concorrente de Pool (`phpspy -P`)**:
+   Em modo container, o medidor utiliza `-P "php-fpm|php"` com múltiplas threads (`-T 16`), modo tolerante a falhas (`-c`) e sincronização por mutex (`-J m`). O profiler rastreia simultaneamente todos os workers ativos e anexa automaticamente aos novos workers que nascem durante picos de estresse.
+
+2. **Agregação Temporal no Scaphandre**:
+   O [analyze_measurement.py](file:///home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/measurement/analyze_measurement.py) agrupa a potência de todos os processos da aplicação por timestamp de snapshot de relatório, somando o consumo elétrico de todo o cluster de workers e processos filhos.
+
+3. **Proteção contra Gaps de Amostragem (`max_interval_gap_s = 3.0s`)**:
+   Caso ocorra alguma descontinuidade na amostragem de hardware, o integrador classifica o intervalo como *unattributed*, impedindo que funções pontuais (como providers de boot) recebam custos energéticos indevidos.
+
+4. **Resolução de Processos Ignorando Supervisores**:
+   O [run-meter.sh](file:///home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/measurement/run-meter.sh) inspeciona os processos do container via `docker top`, filtrando executáveis de supervisão (`s6-svscan`, `s6-supervise`, `s6-linux-init`) e capturando os processos de aplicação reais.
+
+---
+
+## 📚 Estudo de Caso: Medindo o BookStack (Laravel + Docker + MariaDB)
+
+O **BookStack** é uma plataforma de documentação e wiki construída sobre o framework **Laravel**, com persistência em **MySQL/MariaDB** e servida via **PHP-FPM + Nginx**.
+
+```mermaid
+flowchart LR
+    subgraph Host Físico
+        METER["run-meter.sh"]
+        SCAPH["Scaphandre (RAPL)"]
+        PHPSPY["phpspy -P (Pool Profiler)"]
+        K6["k6 (load-test.js)"]
+    end
+
+    subgraph Docker Containers
+        BS["Container: bookstack<br/>(PHP-FPM 8.x + Nginx)"]
+        DB["Container: bookstack_db<br/>(MariaDB Server)"]
+    end
+
+    METER --> SCAPH
+    METER --> PHPSPY
+    PHPSPY -.->|"Attach multi-worker"| BS
+    SCAPH -.->|"Monitora Watts"| BS
+    SCAPH -.->|"Monitora Watts"| DB
+    K6 ==>|"HTTP Carga (180s)"| BS
+    BS <-->|"Queries SQL"| DB
+```
+
+### Passo a Passo para Medir o BookStack:
+
+#### 1. Iniciar os Containers da Aplicação
+Certifique-se de que os containers da aplicação e do banco estão em execução:
+```bash
+docker ps
+```
+*(Exemplo: containers `bookstack` na porta `6875` e `bookstack_db`).*
+
+#### 2. Configurar o Teste de Carga ([load-test.js](file:///home/vinicius/Documentos/Verdize/green-php-lab-meter-ready/load-test.js))
+O script de teste de carga deve simular o uso real do sistema, incluindo autenticação com extração de token CSRF do Laravel:
+* **60% do tráfego**: Navegação e leitura de livros/estantes (`/books`, `/shelves`).
+* **20% do tráfego**: Busca textual (`/search?term=...`), gerando carga nas queries do MariaDB.
+* **20% do tráfego**: Fluxo completo de login (`/login` com POST e sessão autenticada).
+
+#### 3. Iniciar o Medidor (Terminal 1)
+Execute o medidor com a duração correspondente à rampa do k6 (ex: 180s) e filtre pelo namespace `BookStack\`:
+```bash
+./run-meter.sh \
+  --language php \
+  --mode container \
+  -c bookstack \
+  --application-prefix "BookStack\\" \
+  --project-root . \
+  -d 180 \
+  -b 15
+```
+
+#### 4. Executar o Teste de Carga (Terminal 2)
+Assim que o Terminal 1 iniciar a janela de medição, dispare o tráfego:
+```bash
+k6 run load-test.js
+```
+
+#### 5. Interpretação dos Resultados Gerados
+
+Ao final da execução, abra o relatório em `results/php-container-YYYYMMDD-HHMMSS/SUMMARY.md`:
+* **Separação de Camadas**: O Scaphandre isola o custo do runtime do PHP-FPM (geralmente ~85-90% do total) e das consultas do MariaDB (~10-15%).
+* **Custo por Requisição**: Métrica fundamental de *Green Software* expressa em **Joules por Requisição** (ex: `~0,55 J/req` no PHP e `~0,62 J/req` na stack completa).
+* **Hotspots de Negócio**: Identifique nos relatórios e no `energy-flamegraph.svg` quais middlewares, controllers de autenticação ou queries acumulam maior pegada energética.
+
+---
+
 ## 🎯 Filtro de Escopo da Aplicação (Application Scope Filtering)
 
 Em ecossistemas modernos (Laravel, Django, FastAPI, Spring Boot), grande parte das chamadas capturadas pelos profilers pertence à infraestrutura (middlewares, roteamento, serializadores, ORMs, chamadas de sistema como `select()`).
@@ -322,6 +421,7 @@ green-php-lab-meter-ready/
 ├── run-load-test.sh            # Entrypoint do gerador de carga (k6)
 ├── carbon.py                   # Calculadora standalone de emissões de carbono
 ├── k6.js                       # Script de teste de carga constante do k6
+├── load-test.js                # Teste de carga com autenticação CSRF para BookStack
 ├── config/
 │   └── experiment.env          # Arquivo de configuração de parâmetros
 ├── measurement/

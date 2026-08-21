@@ -43,7 +43,8 @@ def parse_pyspy(
         if phase not in ("B", "E"):
             continue
 
-        key = (int(event.get("pid", target_pid)), int(event["tid"]))
+        default_pid = target_pid if target_pid is not None else 0
+        key = (int(event.get("pid", default_pid)), int(event["tid"]))
         ts = float(event["ts"])
 
         emit_segment(key, ts)
