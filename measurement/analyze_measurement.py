@@ -106,6 +106,14 @@ def deduplicate_points(points: Iterable[PowerPoint]) -> list[PowerPoint]:
     return [PowerPoint(t, by_time[t]) for t in sorted(by_time)]
 
 
+def aggregate_points_by_time(points: Iterable[PowerPoint]) -> list[PowerPoint]:
+    by_time: dict[float, float] = {}
+    for point in points:
+        if math.isfinite(point.timestamp) and math.isfinite(point.microwatts):
+            by_time[point.timestamp] = by_time.get(point.timestamp, 0.0) + point.microwatts
+    return [PowerPoint(t, by_time[t]) for t in sorted(by_time)]
+
+
 def extract_scaphandre_series(
     reports: Sequence[dict[str, Any]],
     target_pid: int | None,
@@ -116,28 +124,35 @@ def extract_scaphandre_series(
     for report in reports:
         host = report.get("host") or {}
         try:
+            report_ts = float(host["timestamp"])
             host_points.append(
                 PowerPoint(
-                    float(host["timestamp"]),
+                    report_ts,
                     float(host["consumption"]),
                 )
             )
         except (KeyError, TypeError, ValueError):
-            pass
+            continue
 
+        report_process_uw = 0.0
+        has_matching = False
         for consumer in report.get("consumers") or []:
             try:
                 pid = int(consumer["pid"])
+                exe = consumer.get("exe", "")
+                cmd = consumer.get("cmdline", "")
+                # Exclui o overhead dos próprios coletores de medição do consumo do processo alvo
+                if "scaphandre" in exe or "phpspy" in exe or "py-spy" in exe or "asprof" in exe or "FlameGraph" in cmd:
+                    continue
                 if target_pid is not None and pid != target_pid:
                     continue
-                process_points.append(
-                    PowerPoint(
-                        float(consumer["timestamp"]),
-                        float(consumer["consumption"]),
-                    )
-                )
+                report_process_uw += float(consumer["consumption"])
+                has_matching = True
             except (KeyError, TypeError, ValueError):
                 continue
+
+        if has_matching or target_pid is None:
+            process_points.append(PowerPoint(report_ts, report_process_uw))
 
     return deduplicate_points(host_points), deduplicate_points(process_points)
 
@@ -270,7 +285,8 @@ def write_folded(path: Path, weights: dict[tuple[str, ...], float]) -> None:
 def attribute_energy_to_stacks(
     process_points: Sequence[PowerPoint],
     samples: Sequence[StackSample],
-    target_pid: int,
+    target_pid: int | None = None,
+    max_interval_gap_s: float = 3.0,
 ) -> tuple[
     dict[tuple[str, ...], float],
     dict[tuple[str, ...], float],
@@ -294,7 +310,11 @@ def attribute_energy_to_stacks(
     unattributed_energy = 0.0
     unattributed_time = 0.0
 
-    selected = [sample for sample in samples if sample.pid == target_pid]
+    if target_pid is not None:
+        selected = [sample for sample in samples if sample.pid == target_pid]
+    else:
+        selected = list(samples)
+
     sample_times = [sample.timestamp for sample in selected]
 
     for left, right in zip(process_points, process_points[1:]):
@@ -303,6 +323,14 @@ def attribute_energy_to_stacks(
             continue
 
         interval_energy = ((left.microwatts + right.microwatts) / 2.0) * dt
+
+        # Proteção contra vácuos/gaps na coleta de hardware (ex: processo morreu e passou dezenas de segundos sem leituras)
+        if dt > max_interval_gap_s:
+            unattributed_energy += interval_energy
+            unattributed_time += dt
+            energy_by_stack[("[unattributed: sampling gap]",)] += interval_energy
+            continue
+
         begin = bisect.bisect_left(sample_times, left.timestamp)
         finish = bisect.bisect_left(sample_times, right.timestamp)
         interval_samples = selected[begin:finish]
@@ -435,7 +463,11 @@ def main() -> None:
     window = load_json(args.window)
     start = float(window["start_timestamp"])
     end = float(window["end_timestamp"])
-    target_pid = int(args.target_pid or window["target_pid"])
+    raw_pid = args.target_pid if args.target_pid is not None else window.get("target_pid")
+    try:
+        target_pid = int(raw_pid) if raw_pid is not None else None
+    except (ValueError, TypeError):
+        target_pid = None
     duration = end - start
     language = window.get("language", "process").upper()
 
@@ -447,8 +479,9 @@ def main() -> None:
     if len(host_points) < 2:
         raise ValueError("Not enough host samples around the measurement window.")
     if len(process_points) < 2:
+        pid_msg = f"PID {target_pid}" if target_pid is not None else "application process"
         raise ValueError(
-            f"Not enough {language} PID {target_pid} samples. Check process filtering."
+            f"Not enough {language} {pid_msg} samples. Check process filtering."
         )
 
     host_energy_uj = integrate_microjoules(host_points)

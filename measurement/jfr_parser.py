@@ -6,7 +6,7 @@ from pathlib import Path
 from analyze_measurement import StackSample
 
 
-def parse_jfr(path: Path, target_pid: int) -> list[StackSample]:
+def parse_jfr(path: Path, target_pid: int | None = None) -> list[StackSample]:
     """Parse a .jfr file into StackSample objects"""
     command = [
         "jfr",
@@ -20,6 +20,7 @@ def parse_jfr(path: Path, target_pid: int) -> list[StackSample]:
     data = json.loads(result.stdout)
 
     samples = []
+    pid_val = target_pid if target_pid is not None else 0
     for event in data["recording"]["events"]:
         raw_time = event["values"]["startTime"]
         dt = datetime.fromisoformat(raw_time.replace("Z", "+00:00"))
@@ -31,6 +32,6 @@ def parse_jfr(path: Path, target_pid: int) -> list[StackSample]:
             for frame in reversed (frames)
         )
 
-        samples.append(StackSample(timestamp, target_pid, stack))
+        samples.append(StackSample(timestamp, pid_val, stack))
 
     return sorted(samples, key=lambda sample: sample.timestamp)

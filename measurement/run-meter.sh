@@ -406,27 +406,47 @@ case "$TARGET_MODE" in
 
     case "$TARGET_LANG" in
       php)
-        CHILD_PID=$(pgrep -P "$TARGET_PID" -n 2>/dev/null || true)
+        # 1. Procura worker PHP-FPM ativo no container
+        CHILD_PID=$(docker top "$CONTAINER_NAME" -o pid,comm,args 2>/dev/null | awk '$2 ~ /^php/ && $0 ~ /pool/ { print $1; exit }' || true)
+        # 2. Procura qualquer processo PHP (cli, servidor embutido, fpm master)
+        if [[ -z "$CHILD_PID" ]]; then
+          CHILD_PID=$(docker top "$CONTAINER_NAME" -o pid,comm 2>/dev/null | awk '$2 ~ /^php/ { print $1; exit }' || true)
+        fi
+        # 3. Procura servidores web Apache / HTTPD
+        if [[ -z "$CHILD_PID" ]]; then
+          CHILD_PID=$(docker top "$CONTAINER_NAME" -o pid,comm 2>/dev/null | awk '$2 ~ /^(apache2|httpd)/ { print $1; exit }' || true)
+        fi
+        # 4. Fallback: pgrep
+        if [[ -z "$CHILD_PID" ]]; then
+          CHILD_PID=$(pgrep -P "$TARGET_PID" -x php -n 2>/dev/null || pgrep -P "$TARGET_PID" -n 2>/dev/null || true)
+        fi
+
         if [[ -n "$CHILD_PID" ]]; then
-          echo "PID master: $TARGET_PID. Anexando ao worker PHP: $CHILD_PID"
+          echo "PID root container: $TARGET_PID. Anexando ao processo PHP: $CHILD_PID"
           TARGET_PID="$CHILD_PID"
         else
           echo "Anexando ao PID do container: $TARGET_PID"
         fi
         ;;
       python)
-        CHILD_PID=$(pgrep -P "$TARGET_PID" -n 2>/dev/null || true)
+        CHILD_PID=$(docker top "$CONTAINER_NAME" -o pid,comm 2>/dev/null | awk '$2 ~ /^(python|python3|pypy|gunicorn|uvicorn|uwsgi)/ { print $1; exit }' || true)
+        if [[ -z "$CHILD_PID" ]]; then
+          CHILD_PID=$(pgrep -P "$TARGET_PID" -n 2>/dev/null || true)
+        fi
         if [[ -n "$CHILD_PID" ]]; then
-          echo "PID master: $TARGET_PID. Anexando ao worker Python: $CHILD_PID"
+          echo "PID root container: $TARGET_PID. Anexando ao processo Python: $CHILD_PID"
           TARGET_PID="$CHILD_PID"
         else
           echo "Anexando ao PID do container: $TARGET_PID"
         fi
         ;;
       java)
-        JAVA_CHILD=$(pgrep -P "$TARGET_PID" -x java -n 2>/dev/null || true)
+        JAVA_CHILD=$(docker top "$CONTAINER_NAME" -o pid,comm 2>/dev/null | awk '$2 ~ /^java/ { print $1; exit }' || true)
+        if [[ -z "$JAVA_CHILD" ]]; then
+          JAVA_CHILD=$(pgrep -P "$TARGET_PID" -x java -n 2>/dev/null || true)
+        fi
         if [[ -n "$JAVA_CHILD" ]]; then
-          echo "PID master: $TARGET_PID. Anexando ao processo Java: $JAVA_CHILD"
+          echo "PID root container: $TARGET_PID. Anexando ao processo Java: $JAVA_CHILD"
           TARGET_PID="$JAVA_CHILD"
         else
           echo "Anexando ao PID do container: $TARGET_PID"
@@ -513,15 +533,30 @@ SCAPH_PID=$!
 # 3. Inicia Profiler específico da linguagem
 case "$TARGET_LANG" in
   php)
-    echo "==> Iniciando phpspy no PID $TARGET_PID..."
-    sudo "$PHPSPY" \
-      -H "${PHPSPY_RATE_HZ:-99}" \
-      -i "$COLLECTOR_TIMEOUT_MS" \
-      -p "$TARGET_PID" \
-      -d pt \
-      -o "$PROFILER_FILE" \
-      2>"$PROFILER_ERR" &
-    PROFILER_PID=$!
+    if [[ "$TARGET_MODE" == "container" || "$TARGET_MODE" == "docker" ]]; then
+      echo "==> Iniciando phpspy no modo pool/multi-processos (-P 'php-fpm|php')..."
+      sudo "$PHPSPY" \
+        -P "php-fpm|php" \
+        -T "${PHPSPY_THREADS:-16}" \
+        -H "${PHPSPY_RATE_HZ:-99}" \
+        -i "$COLLECTOR_TIMEOUT_MS" \
+        -d pt \
+        -J m \
+        -c \
+        -o "$PROFILER_FILE" \
+        2>"$PROFILER_ERR" &
+      PROFILER_PID=$!
+    else
+      echo "==> Iniciando phpspy no PID $TARGET_PID..."
+      sudo "$PHPSPY" \
+        -H "${PHPSPY_RATE_HZ:-99}" \
+        -i "$COLLECTOR_TIMEOUT_MS" \
+        -p "$TARGET_PID" \
+        -d pt \
+        -o "$PROFILER_FILE" \
+        2>"$PROFILER_ERR" &
+      PROFILER_PID=$!
+    fi
     ;;
   python)
     echo "==> Iniciando py-spy no PID $TARGET_PID..."
@@ -593,12 +628,13 @@ import json
 import sys
 
 path, start, end, pid, lang, mode = sys.argv[1:]
+target_pid_val = None if mode in ("container", "docker") else (int(pid) if pid and pid.isdigit() else None)
 json.dump(
     {
         "start_timestamp": float(start),
         "end_timestamp": float(end),
         "duration_seconds": float(end) - float(start),
-        "target_pid": int(pid),
+        "target_pid": target_pid_val,
         "language": lang,
         "mode": mode,
     },
@@ -653,6 +689,8 @@ esac
 
 if [[ -f "$K6_SUMMARY" ]]; then
   ANALYZE_ARGS+=(--k6 "$K6_SUMMARY")
+elif [[ -f "$PROJECT_DIR/results/k6-summary.json" ]]; then
+  ANALYZE_ARGS+=(--k6 "$PROJECT_DIR/results/k6-summary.json")
 fi
 
 if [[ -n "$PROJECT_ROOT" ]]; then

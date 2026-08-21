@@ -9,6 +9,8 @@ trap 'rm -rf "$OUTPUT"' EXIT
 python3 "$PROJECT_DIR/measurement/analyze_measurement.py" \
   --scaphandre "$FIXTURES/scaphandre.json" \
   --phpspy "$FIXTURES/phpspy.txt" \
+  --application-prefix "is" \
+  --project-root "$PROJECT_DIR" \
   --window "$FIXTURES/window.json" \
   --k6 "$FIXTURES/k6-summary.json" \
   --carbon-intensity 100 \
@@ -38,6 +40,8 @@ trap 'rm -rf "$OUTPUT" "$OUTPUT_NO_K6"' EXIT
 python3 "$PROJECT_DIR/measurement/analyze_measurement.py" \
   --scaphandre "$FIXTURES/scaphandre.json" \
   --phpspy "$FIXTURES/phpspy.txt" \
+  --application-prefix "is" \
+  --project-root "$PROJECT_DIR" \
   --window "$FIXTURES/window.json" \
   --carbon-intensity 100 \
   --output-dir "$OUTPUT_NO_K6" >/dev/null
@@ -61,6 +65,8 @@ trap 'rm -rf "$OUTPUT" "$OUTPUT_NO_K6" "$OUTPUT_PYSPY"' EXIT
 python3 "$PROJECT_DIR/measurement/analyze_measurement.py" \
   --scaphandre "$FIXTURES/scaphandre.json" \
   --pyspy "$FIXTURES/pyspy.chrometrace.json" \
+  --application-prefix "server" \
+  --project-root "/app" \
   --start-time 1000.0 \
   --pyspy-rate 100.0 \
   --window "$FIXTURES/window.json" \
