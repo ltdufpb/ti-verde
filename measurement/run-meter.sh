@@ -470,7 +470,7 @@ else
   SCAPH_REGEX="$SCAPHANDRE_PROCESS_REGEX"
 fi
 
-sudo -v
+sudo -v 2>/dev/null || true
 
 # 1. Medição de Baseline em Repouso (Scaphandre)
 if [[ "${TARGET_BASELINE}" -gt 0 ]]; then
