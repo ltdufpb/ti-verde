@@ -561,7 +561,11 @@ case "$TARGET_LANG" in
   python)
     echo "==> Iniciando py-spy no PID $TARGET_PID..."
     PYSPY_START_TIME="$(python3 -c 'import time; print(time.time())')"
-    PYSPY_EXTRA_ARGS=()
+    # -s/--subprocesses: servidores WSGI multi-worker (granian, gunicorn,
+    # uwsgi) atendem requisições em processos filhos forkados do master; sem
+    # isso o py-spy só amostra o processo coordenador, que não roda código
+    # de aplicação.
+    PYSPY_EXTRA_ARGS=(--subprocesses)
     if [[ "${PYSPY_INCLUDE_IDLE:-false}" == "true" ]]; then
       PYSPY_EXTRA_ARGS+=(--idle)
     fi
@@ -628,7 +632,15 @@ import json
 import sys
 
 path, start, end, pid, lang, mode = sys.argv[1:]
-target_pid_val = None if mode in ("container", "docker") else (int(pid) if pid and pid.isdigit() else None)
+# python: py-spy sempre roda com --subprocesses (servidores WSGI multi-worker
+# atendem requisições em processos filhos), então as amostras relevantes têm
+# vários PIDs distintos — filtrar por um único target_pid descartaria os
+# workers reais. container/docker: mesmo raciocínio para pools PHP-FPM etc.
+target_pid_val = (
+    None
+    if mode in ("container", "docker") or lang == "python"
+    else (int(pid) if pid and pid.isdigit() else None)
+)
 json.dump(
     {
         "start_timestamp": float(start),
