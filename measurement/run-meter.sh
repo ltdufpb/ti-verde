@@ -429,7 +429,7 @@ case "$TARGET_MODE" in
         fi
         ;;
       python)
-        CHILD_PID=$(docker top "$CONTAINER_NAME" -o pid,comm 2>/dev/null | awk '$2 ~ /^(python|python3|pypy|gunicorn|uvicorn|uwsgi)/ { print $1; exit }' || true)
+        CHILD_PID=$(docker top "$CONTAINER_NAME" -o pid,comm 2>/dev/null | awk '$2 ~ /^(python|python3|pypy|gunicorn|uvicorn|uwsgi|granian|daphne|hypercorn|waitress)/ { print $1; exit }' || true)
         if [[ -z "$CHILD_PID" ]]; then
           CHILD_PID=$(pgrep -P "$TARGET_PID" -n 2>/dev/null || true)
         fi
