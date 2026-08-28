@@ -187,7 +187,7 @@ Conecta os coletores diretamente a um processo existente no Linux através do se
 | `-d, --duration <seg>` | Duração da janela de medição em segundos | `60` |
 | `-b, --baseline <seg>` | Duração da medição em repouso (*baseline*) | `15` |
 | `-o, --output <dir>` | Diretório customizado de saída para os resultados | `results/...` |
-| `--prefix, --application-prefix <pref>` | Filtra funções no relatório pelo prefixo do pacote/módulo | - |
+| `--prefix, --application-prefix <prefs>` | Filtra funções por um ou múltiplos prefixos separados por vírgula (ex: `api,service` ou `App\,Domain\`) | - |
 | `--project-root <dir>` | Raiz do código-fonte para qualificação dos frames | - |
 | `--config <arquivo>` | Caminho do arquivo de configuração `.env` | `config/experiment.env` |
 | `--k6 <arquivo>` | Caminho do resumo gerado pelo k6 (`k6-summary.json`) | `results/k6-summary.json` |
@@ -292,35 +292,39 @@ Ao final da execução, abra o relatório em `results/php-container-YYYYMMDD-HHM
 
 ## 🎯 Filtro de Escopo da Aplicação (Application Scope Filtering)
 
-Em ecossistemas modernos (Laravel, Django, FastAPI, Spring Boot), grande parte das chamadas capturadas pelos profilers pertence à infraestrutura (middlewares, roteamento, serializadores, ORMs, chamadas de sistema como `select()`).
+Em ecossistemas modernos (Laravel, Django, FastAPI, Spring Boot), grande parte das chamadas capturadas pelos profilers pertence à infraestrutura (middlewares internos, roteamento, serializadores, ORMs, chamadas de sistema ou bibliotecas de terceiros).
 
-Para guiar a **refatoração verde (*Green Refactoring*)**, o medidor possui um mecanismo de **filtro de escopo** que isola as funções de negócio da aplicação:
+Para guiar a **refatoração verde (*Green Refactoring*)**, o medidor possui um mecanismo de **filtro de escopo multi-prefixo** agnóstico à linguagem que isola as funções de negócio da aplicação e agrupa o restante sob o rótulo `[framework/language overhead]`.
 
-### Como Utilizar:
+### Suporte a Múltiplos Prefixos (Separados por Vírgula):
 
-Passe as flags `--project-root` e `--application-prefix` no momento da medição:
+Você pode especificar um ou múltiplos prefixos separados por vírgula (`prefixo1,prefixo2,prefixo3`). O analisador verifica se a função inicia com **qualquer um** dos prefixos configurados.
 
 ```bash
-# Python: foca apenas nas funções do módulo 'myapp'
-./run-meter.sh --language python --mode local \
-  --project-root . \
-  --application-prefix "myapp"
+# Python: filtra múltiplos módulos / sub-apps de negócio (ex: Django/FastAPI)
+./run-meter.sh --language python --mode container -c backend \
+  --project-root /code \
+  --application-prefix "api,librephotos,service,image_similarity"
 
-# Java: foca apenas no pacote 'com.minhaempresa.servico'
-./run-meter.sh --language java --mode local \
-  --application-prefix "com.minhaempresa.servico"
-
-# PHP: foca apenas no namespace 'App\'
+# PHP: filtra múltiplos namespaces do sistema
 ./run-meter.sh --language php --mode local \
   --project-root . \
-  --application-prefix "App\\"
+  --application-prefix "App\\,BookStack\\,Domain\\"
+
+# Java: filtra múltiplos pacotes do projeto (Spring Boot, Microsserviços)
+./run-meter.sh --language java --mode local \
+  --application-prefix "com.minhaempresa.servico,com.minhaempresa.controlador,br.ufpb"
 ```
 
-Ou configure permanentemente no arquivo `config/experiment.env`:
+Ou configure diretamente no arquivo de ambiente (ex: `config/experiment.env` ou `config/librephotos.env`):
 ```env
-APPLICATION_PREFIX=myapp
-PROJECT_ROOT=/caminho/do/projeto
+APPLICATION_PREFIX=api,librephotos,service,image_similarity
+PROJECT_ROOT=/code
 ```
+
+### Como o Analisador Trata os Escopos:
+1. **Funções no Escopo:** Têm suas métricas de energia (`Self Energy` e `Inclusive Energy`) e tempo de execução contabilizados detalhadamente no `SUMMARY.md`, `summary.json` e `top-functions.csv`.
+2. **Funções Fora do Escopo:** São colapsadas e consolidadas automaticamente como `[framework/language overhead]` nos FlameGraphs interativos (`energy-flamegraph.svg` e `cpu-flamegraph.svg`), evitando ruído visual de frameworks.
 
 ### Como Interpretar os Relatórios (`SUMMARY.md` e `top-functions.csv`):
 
