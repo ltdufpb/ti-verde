@@ -153,7 +153,13 @@ echo "==========================================================================
 
 K6_SCRIPT="${K6_SCRIPT:-}"
 if [[ -z "$K6_SCRIPT" ]]; then
-  if [[ "$TARGET_WORKLOAD" == "librephotos" && -f "$PROJECT_DIR/librephotos-load-test.js" ]]; then
+  if [[ "$TARGET_WORKLOAD" == "sigaa" && -f "$PROJECT_DIR/sigaa-load-test.js" ]]; then
+    K6_SCRIPT="$PROJECT_DIR/sigaa-load-test.js"
+  elif [[ "$TARGET_WORKLOAD" == "sipac" && -f "$PROJECT_DIR/sipac-load-test.js" ]]; then
+    K6_SCRIPT="$PROJECT_DIR/sipac-load-test.js"
+  elif [[ ("$TARGET_WORKLOAD" == "ufpb-portal" || "$TARGET_WORKLOAD" == "ufpb") && -f "$PROJECT_DIR/ufpb-portal-load-test.js" ]]; then
+    K6_SCRIPT="$PROJECT_DIR/ufpb-portal-load-test.js"
+  elif [[ "$TARGET_WORKLOAD" == "librephotos" && -f "$PROJECT_DIR/librephotos-load-test.js" ]]; then
     K6_SCRIPT="$PROJECT_DIR/librephotos-load-test.js"
   elif [[ "$TARGET_WORKLOAD" == "bookstack" && -f "$PROJECT_DIR/load-test.js" ]]; then
     K6_SCRIPT="$PROJECT_DIR/load-test.js"
@@ -169,6 +175,14 @@ if [[ "$TARGET_WARMUP" -gt 0 ]]; then
   WORKLOAD="$TARGET_WORKLOAD" \
   WP_USER="$WP_USER" \
   WP_PASS="$WP_PASS" \
+  UFPB_USER="${UFPB_USER:-$WP_USER}" \
+  UFPB_PASS="${UFPB_PASS:-$WP_PASS}" \
+  SIGAA_USER="${SIGAA_USER:-$WP_USER}" \
+  SIGAA_PASS="${SIGAA_PASS:-$WP_PASS}" \
+  SIPAC_USER="${SIPAC_USER:-$WP_USER}" \
+  SIPAC_PASS="${SIPAC_PASS:-$WP_PASS}" \
+  LIBREPHOTOS_USER="${LIBREPHOTOS_USER:-$WP_USER}" \
+  LIBREPHOTOS_PASS="${LIBREPHOTOS_PASS:-$WP_PASS}" \
   SCALE="$TARGET_SCALE" \
   RATE="$TARGET_RATE" \
   DURATION_SECONDS="$TARGET_WARMUP" \
@@ -183,8 +197,14 @@ BASE_URL="$TARGET_URL" \
 WORKLOAD="$TARGET_WORKLOAD" \
 WP_USER="$WP_USER" \
 WP_PASS="$WP_PASS" \
-LIBREPHOTOS_USER="$WP_USER" \
-LIBREPHOTOS_PASS="$WP_PASS" \
+UFPB_USER="${UFPB_USER:-$WP_USER}" \
+UFPB_PASS="${UFPB_PASS:-$WP_PASS}" \
+SIGAA_USER="${SIGAA_USER:-$WP_USER}" \
+SIGAA_PASS="${SIGAA_PASS:-$WP_PASS}" \
+SIPAC_USER="${SIPAC_USER:-$WP_USER}" \
+SIPAC_PASS="${SIPAC_PASS:-$WP_PASS}" \
+LIBREPHOTOS_USER="${LIBREPHOTOS_USER:-$WP_USER}" \
+LIBREPHOTOS_PASS="${LIBREPHOTOS_PASS:-$WP_PASS}" \
 SCALE="$TARGET_SCALE" \
 RATE="$TARGET_RATE" \
 DURATION_SECONDS="$TARGET_DURATION" \

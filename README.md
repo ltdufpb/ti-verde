@@ -21,6 +21,7 @@ Ele integra medição direta de hardware via contadores Intel/AMD RAPL (**Scapha
 12. [Estrutura do Repositório](#-estrutura-do-repositório)
 13. [Calculadora de Carbono (`carbon.py`)](#-calculadora-de-carbono-carbonpy)
 14. [Boas Práticas de Medição](#-boas-práticas-de-medição)
+15. [🏛️ Guia Especializado: Medição na STI / UFPB (SIGAA, SIPAC, Portais)](#-guia-especializado-medição-na-sti--ufpb-sigaa-sipac-portais)
 
 ---
 
@@ -427,7 +428,17 @@ green-php-lab-meter-ready/
 ├── k6.js                       # Script de teste de carga constante do k6
 ├── load-test.js                # Teste de carga com autenticação CSRF para BookStack
 ├── config/
-│   └── experiment.env          # Arquivo de configuração de parâmetros
+│   ├── experiment.env          # Configuração padrão de teste
+│   ├── ufpb-sigaa.env          # Configuração pronta para o SIGAA (Java/Tomcat)
+│   ├── ufpb-sipac.env          # Configuração pronta para o SIPAC (Java/Tomcat)
+│   ├── ufpb-portal-php.env     # Configuração pronta para o Portal Institucional (PHP)
+│   ├── ufpb-api-python.env     # Configuração pronta para APIs STI (FastAPI/Django)
+│   └── ufpb-hypervisor-host.env# Configuração para nó de Data Center / Proxmox
+├── docs/
+│   └── STI_UFPB_GUIDE.md       # Guia completo para medição nos sistemas da UFPB
+├── sigaa-load-test.js          # Teste de carga k6 para o SIGAA
+├── sipac-load-test.js          # Teste de carga k6 para o SIPAC
+├── ufpb-portal-load-test.js    # Teste de carga k6 para o Portal UFPB
 ├── measurement/
 │   ├── run-meter.sh            # Engine de medição e acoplamento de coletores
 │   ├── run-load-test.sh        # Engine de execução do k6
@@ -450,10 +461,14 @@ green-php-lab-meter-ready/
 
 ## 🧮 Calculadora de Carbono (`carbon.py`)
 
-Utilitário de linha de comando para conversão direta de Joules em emissões operacionais:
+Utilitário de linha de comando para conversão direta de Joules em emissões operacionais, com suporte a presets regionais da matriz elétrica brasileira (**SIN**):
 
 ```bash
-./carbon.py --energy-j 125.5 --carbon-intensity 100 --requests 120
+# Cálculo usando o fator regional do Nordeste (UFPB / PB ~45.2 gCO2e/kWh):
+python3 carbon.py --energy-j 1250.5 --preset ufpb --requests 250
+
+# Cálculo usando a média nacional do SIN (61.7 gCO2e/kWh):
+python3 carbon.py --energy-j 1250.5 --preset sin-brasil --requests 250
 ```
 
 ---
@@ -463,3 +478,16 @@ Utilitário de linha de comando para conversão direta de Joules em emissões op
 1. **Desacoplamento de Carga**: Execute o gerador `run-load-test.sh` em um computador cliente separado na rede para garantir isolamento elétrico completo dos contadores RAPL.
 2. **Repetição de Medições**: Realize no mínimo 5 repetições para cada medição experimental a fim de obter significância estatística.
 3. **Desconto de Baseline**: O medidor desconta automaticamente a taxa de consumo elétrico da máquina em repouso (*idle baseline*), gerando a métrica de **energia dinâmica**.
+
+---
+
+## 🏛️ Guia Especializado: Medição na STI / UFPB (SIGAA, SIPAC, Portais)
+
+Para executar medições completas na infraestrutura e nos sistemas da **STI / UFPB**, consulte o guia dedicado em:
+👉 **[`docs/STI_UFPB_GUIDE.md`](docs/STI_UFPB_GUIDE.md)**
+
+O repositório inclui suporte pré-configurado para:
+* **Ambiente Staging / Bare-Metal:** Perfilar containers Docker do SIGAA, SIPAC, Portal ou APIs Python com contadores RAPL nativos.
+* **Nós Hypervisor (Proxmox/KVM):** Monitorar o gasto energético total do servidor físico e isolar os Watts de cada VM corporativa.
+* **Workloads k6 reais:** Cenários que simulam navegação discente, consulta de notas, emissão de histórico/declarações (PDF) e tramitação de processos.
+
