@@ -527,7 +527,9 @@ def main() -> None:
 
     from application_scope import summarize_by_scope, truncate_stacks_to_scope
 
-    prefixes = (args.application_prefix,)
+    prefixes = tuple(
+        p.strip() for p in args.application_prefix.split(",") if p.strip()
+    )
     self_energy = summarize_by_scope(self_energy, prefixes)
     inclusive_energy = summarize_by_scope(inclusive_energy, prefixes)
     self_time = summarize_by_scope(self_time, prefixes)
