@@ -135,6 +135,18 @@ while [[ $# -gt 0 ]]; do
       if [[ -f "$CONFIG_FILE" ]]; then
         # shellcheck disable=SC1090
         source "$CONFIG_FILE"
+        TARGET_LANG="${TARGET_LANGUAGE:-${METER_LANGUAGE:-$TARGET_LANG}}"
+        TARGET_MODE="${MODE:-$TARGET_MODE}"
+        CONTAINER_NAME="${CONTAINER_NAME:-$CONTAINER_NAME}"
+        TARGET_PID="${PID:-$TARGET_PID}"
+        TARGET_DURATION="${DURATION_SECONDS:-$TARGET_DURATION}"
+        TARGET_BASELINE="${BASELINE_SECONDS:-$TARGET_BASELINE}"
+        APPLICATION_PREFIX="${APPLICATION_PREFIX:-$APPLICATION_PREFIX}"
+        PROJECT_ROOT="${PROJECT_ROOT:-$PROJECT_ROOT}"
+        CUSTOM_OUTPUT_DIR="${OUTPUT_DIR:-$CUSTOM_OUTPUT_DIR}"
+        HOST="${HOST:-$HOST}"
+        PORT="${PORT:-$PORT}"
+        BASE_URL="${BASE_URL:-$BASE_URL}"
       fi
       shift 2
       ;;
@@ -429,7 +441,13 @@ case "$TARGET_MODE" in
         fi
         ;;
       python)
-        CHILD_PID=$(docker top "$CONTAINER_NAME" -o pid,comm 2>/dev/null | awk '$2 ~ /^(python|python3|pypy|gunicorn|uvicorn|uwsgi|granian|daphne|hypercorn|waitress)/ { print $1; exit }' || true)
+        # 1. Procura servidores web ASGI/WSGI (gunicorn, uvicorn, uwsgi, granian, etc.)
+        CHILD_PID=$(docker top "$CONTAINER_NAME" -o pid,comm,args 2>/dev/null | awk '$2 ~ /^(gunicorn|uvicorn|uwsgi|granian|daphne|hypercorn|waitress)/ || $0 ~ /(gunicorn|uvicorn|uwsgi|granian|daphne|hypercorn|waitress)/ { print $1; exit }' || true)
+        # 2. Procura processos python gerais
+        if [[ -z "$CHILD_PID" ]]; then
+          CHILD_PID=$(docker top "$CONTAINER_NAME" -o pid,comm 2>/dev/null | awk '$2 ~ /^(python|python3|pypy)/ { print $1; exit }' || true)
+        fi
+        # 3. Fallback: pgrep
         if [[ -z "$CHILD_PID" ]]; then
           CHILD_PID=$(pgrep -P "$TARGET_PID" -n 2>/dev/null || true)
         fi
@@ -560,7 +578,6 @@ case "$TARGET_LANG" in
     ;;
   python)
     echo "==> Iniciando py-spy no PID $TARGET_PID..."
-    PYSPY_START_TIME="$(python3 -c 'import time; print(time.time())')"
     # -s/--subprocesses: servidores WSGI multi-worker (granian, gunicorn,
     # uwsgi) atendem requisições em processos filhos forkados do master; sem
     # isso o py-spy só amostra o processo coordenador, que não roda código

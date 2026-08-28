@@ -18,16 +18,18 @@ def parse_pyspy(
         events = json.load(file)
 
     tick_us = 1_000_000.0 / sample_rate_hz
-    stacks: dict[tuple[int, int], list[tuple[str, str]]] = {}
+    # raw_stacks: (pid, tid) -> list of raw frame names for matching
+    raw_stacks: dict[tuple[int, int], list[str]] = {}
+    qualified_stacks: dict[tuple[int, int], list[str]] = {}
+    frozen_stacks: dict[tuple[int, int], tuple[str, ...]] = {}
     segment_starts: dict[tuple[int, int], float] = {}
     samples: list[StackSample] = []
 
     def emit_segment(key: tuple[int, int], end_ts: float) -> None:
-        stack = stacks.get(key)
+        frozen = frozen_stacks.get(key)
         begin_ts = segment_starts.get(key)
-        if not stack or begin_ts is None:
+        if not frozen or begin_ts is None:
             return
-        frozen = tuple(qualified for _, qualified in stack)
         pid = key[0]
         t = begin_ts
         while t < end_ts:
@@ -36,39 +38,45 @@ def parse_pyspy(
             )
             t += tick_us
 
-    # Stable sort: preserves file order for same-ts events, which is
-    # what keeps push/pop ordering correct within a burst.
-    for event in sorted(events, key=lambda e: e["ts"]):
+    # py-spy generates events in chronological stream
+    for event in events:
         phase = event.get("ph")
         if phase not in ("B", "E"):
             continue
 
         default_pid = target_pid if target_pid is not None else 0
-        key = (int(event.get("pid", default_pid)), int(event["tid"]))
-        ts = float(event["ts"])
+        key = (int(event.get("pid", default_pid)), int(event.get("tid", 0)))
+        ts = float(event.get("ts", 0))
 
         emit_segment(key, ts)
         segment_starts[key] = ts
 
-        stack = stacks.setdefault(key, [])
+        r_stack = raw_stacks.setdefault(key, [])
+        q_stack = qualified_stacks.setdefault(key, [])
+        name = event.get("name", "")
+
         if phase == "B":
             filename = event.get("args", {}).get("filename")
-            qualified = qualify_frame_name(event["name"], filename, project_root)
-            stack.append((event["name"], qualified))
+            qualified = qualify_frame_name(name, filename, project_root)
+            r_stack.append(name)
+            q_stack.append(qualified)
+            frozen_stacks[key] = tuple(q_stack)
         else:
-            if not stack:
-                print(
-                    f"WARNING: 'E' event without open frame at ts={ts}",
-                    file=sys.stderr,
-                )
+            if not r_stack:
                 continue
-            popped_name, _ = stack.pop()
-            if popped_name != event["name"]:
-                print(
-                    "WARNING: frame mismatch on close: "
-                    f"expected {popped_name!r}, got {event['name']!r}",
-                    file=sys.stderr,
-                )
+            # Search from top of stack downwards for the matching frame name
+            found_idx = -1
+            for i in range(len(r_stack) - 1, -1, -1):
+                if r_stack[i] == name:
+                    found_idx = i
+                    break
+            if found_idx != -1:
+                del r_stack[found_idx:]
+                del q_stack[found_idx:]
+            else:
+                r_stack.pop()
+                q_stack.pop()
+            frozen_stacks[key] = tuple(q_stack)
 
     # Frames still open at end of file (interrupted recording) have no
     # known end time; their trailing segment is dropped, not guessed.

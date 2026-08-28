@@ -99,6 +99,25 @@ while [[ $# -gt 0 ]]; do
       TARGET_WARMUP="$2"
       shift 2
       ;;
+    -c|--config)
+      CONFIG_FILE="$2"
+      if [[ -f "$CONFIG_FILE" ]]; then
+        # shellcheck disable=SC1090
+        source "$CONFIG_FILE"
+        TARGET_URL="${BASE_URL:-$TARGET_URL}"
+        TARGET_WORKLOAD="${WORKLOAD:-$TARGET_WORKLOAD}"
+        TARGET_SCALE="${SCALE:-$TARGET_SCALE}"
+        TARGET_RATE="${RATE:-$TARGET_RATE}"
+        TARGET_DURATION="${DURATION_SECONDS:-$TARGET_DURATION}"
+        WP_USER="${WP_USER:-${LIBREPHOTOS_USER:-$WP_USER}}"
+        WP_PASS="${WP_PASS:-${LIBREPHOTOS_PASS:-$WP_PASS}}"
+      fi
+      shift 2
+      ;;
+    --script)
+      K6_SCRIPT="$2"
+      shift 2
+      ;;
     -o|--output)
       OUTPUT_SUMMARY="$2"
       shift 2
@@ -132,6 +151,17 @@ echo " Escala:         $TARGET_SCALE"
 echo " Resumo em:      $OUTPUT_SUMMARY"
 echo "=========================================================================="
 
+K6_SCRIPT="${K6_SCRIPT:-}"
+if [[ -z "$K6_SCRIPT" ]]; then
+  if [[ "$TARGET_WORKLOAD" == "librephotos" && -f "$PROJECT_DIR/librephotos-load-test.js" ]]; then
+    K6_SCRIPT="$PROJECT_DIR/librephotos-load-test.js"
+  elif [[ "$TARGET_WORKLOAD" == "bookstack" && -f "$PROJECT_DIR/load-test.js" ]]; then
+    K6_SCRIPT="$PROJECT_DIR/load-test.js"
+  else
+    K6_SCRIPT="$PROJECT_DIR/k6.js"
+  fi
+fi
+
 if [[ "$TARGET_WARMUP" -gt 0 ]]; then
   echo "==> Executando Warm-up de ${TARGET_WARMUP}s..."
   SUMMARY_PATH="/dev/null" \
@@ -142,21 +172,23 @@ if [[ "$TARGET_WARMUP" -gt 0 ]]; then
   SCALE="$TARGET_SCALE" \
   RATE="$TARGET_RATE" \
   DURATION_SECONDS="$TARGET_WARMUP" \
-  k6 run --quiet "$PROJECT_DIR/k6.js"
+  k6 run --quiet "$K6_SCRIPT"
   echo "==> Warm-up concluído. Aguardando 2s antes da carga principal..."
   sleep 2
 fi
 
-echo "==> Iniciando teste de carga medido..."
+echo "==> Iniciando teste de carga medido usando $K6_SCRIPT..."
 SUMMARY_PATH="$OUTPUT_SUMMARY" \
 BASE_URL="$TARGET_URL" \
 WORKLOAD="$TARGET_WORKLOAD" \
 WP_USER="$WP_USER" \
 WP_PASS="$WP_PASS" \
+LIBREPHOTOS_USER="$WP_USER" \
+LIBREPHOTOS_PASS="$WP_PASS" \
 SCALE="$TARGET_SCALE" \
 RATE="$TARGET_RATE" \
 DURATION_SECONDS="$TARGET_DURATION" \
-k6 run "$PROJECT_DIR/k6.js"
+k6 run "$K6_SCRIPT"
 
 echo
 echo "Teste de carga concluído com sucesso!"
