@@ -10,14 +10,13 @@ if [[ -f "$CONFIG_FILE" ]]; then
 fi
 
 TARGET_URL="${BASE_URL:-http://127.0.0.1:8080}"
-TARGET_WORKLOAD="${WORKLOAD:-wordpress}"
+TARGET_WORKLOAD="${WORKLOAD:-mixed}"
 TARGET_SCALE="${SCALE:-1}"
 TARGET_RATE="${RATE:-2}"
 TARGET_DURATION="${DURATION_SECONDS:-60}"
 TARGET_WARMUP=0
-WP_USER="${WP_USER:-marcos}"
-WP_PASS="${WP_PASS:-Teste1234}"
 OUTPUT_SUMMARY="${K6_SUMMARY:-$PROJECT_DIR/results/k6-summary.json}"
+K6_SCRIPT="${K6_SCRIPT:-}"
 
 usage() {
   cat <<EOF
@@ -26,25 +25,30 @@ Uso: $(basename "$0") [WORKLOAD] [OPÇÕES]
 Script dedicado para execução separada do teste de carga com k6.
 Pode ser executado localmente em outro terminal ou em uma máquina remota de teste.
 
+Sem --script, roda o workload sintético embutido nos servidores de teste
+(public/index.php, scripts/python-server.py, scripts/JavaServer.java) contra
+o endpoint /work. Para medir uma aplicação real, escreva seu
+próprio arquivo k6 (veja modelo em k6.js) e aponte para ele com --script.
+
 Argumentos posicionais (opcional):
-  wordpress | cpu | text | mixed | login    Define o tipo de workload rapidamente
+  cpu | text | wordpress | mixed    Define o tipo de workload sintético rapidamente
 
 Opções:
   -u, --url <URL>           URL base da aplicação (padrão: $TARGET_URL)
-  -w, --workload <TIPO>     Tipo de workload: wordpress, cpu, text, mixed, login (padrão: $TARGET_WORKLOAD)
+  -w, --workload <TIPO>     Tipo de workload sintético: cpu, text, wordpress, mixed (padrão: $TARGET_WORKLOAD)
   -r, --rate <REQ/S>        Taxa constante de requisições por segundo (padrão: $TARGET_RATE)
   -d, --duration <SEGUNDOS> Duração da carga em segundos (padrão: $TARGET_DURATION)
   -s, --scale <VALOR>       Fator de escala de processamento (padrão: $TARGET_SCALE)
-  --user <USUÁRIO>          Usuário para login WordPress (padrão: $WP_USER)
-  --pass <SENHA>            Senha para login WordPress (padrão: $WP_PASS)
   --warmup <SEGUNDOS>       Executa um aquecimento prévio antes da carga principal (padrão: 0)
+  --script <ARQUIVO>        Script k6 customizado (ex: para testar rotas reais de uma aplicação)
+  -c, --config <ARQUIVO>    Arquivo de configuração .env (padrão: $CONFIG_FILE)
   -o, --output <ARQUIVO>    Caminho do arquivo de resumo k6 (padrão: $OUTPUT_SUMMARY)
   -h, --help                Exibe esta ajuda
 
 Exemplos:
-  $(basename "$0") wordpress
-  $(basename "$0") cpu
-  $(basename "$0") --url http://192.168.1.50:8080 --rate 5 --duration 60
+  $(basename "$0") mixed
+  $(basename "$0") cpu --rate 5 --duration 60
+  $(basename "$0") --url http://127.0.0.1:8443 --script meu-teste-aplicacao.js
 EOF
   exit 0
 }
@@ -52,11 +56,7 @@ EOF
 # Processamento de primeiro argumento posicional se fornecido
 if [[ $# -gt 0 && ! "$1" =~ ^- ]]; then
   case "$1" in
-    wordpress|wp)
-      TARGET_WORKLOAD="wordpress"
-      shift
-      ;;
-    cpu|text|mixed|login)
+    cpu|text|wordpress|mixed)
       TARGET_WORKLOAD="$1"
       shift
       ;;
@@ -87,14 +87,6 @@ while [[ $# -gt 0 ]]; do
       TARGET_SCALE="$2"
       shift 2
       ;;
-    --user)
-      WP_USER="$2"
-      shift 2
-      ;;
-    --pass)
-      WP_PASS="$2"
-      shift 2
-      ;;
     --warmup)
       TARGET_WARMUP="$2"
       shift 2
@@ -109,8 +101,6 @@ while [[ $# -gt 0 ]]; do
         TARGET_SCALE="${SCALE:-$TARGET_SCALE}"
         TARGET_RATE="${RATE:-$TARGET_RATE}"
         TARGET_DURATION="${DURATION_SECONDS:-$TARGET_DURATION}"
-        WP_USER="${WP_USER:-${LIBREPHOTOS_USER:-$WP_USER}}"
-        WP_PASS="${WP_PASS:-${LIBREPHOTOS_PASS:-$WP_PASS}}"
       fi
       shift 2
       ;;
@@ -141,9 +131,14 @@ fi
 
 mkdir -p "$(dirname "$OUTPUT_SUMMARY")"
 
+if [[ -z "$K6_SCRIPT" ]]; then
+  K6_SCRIPT="$PROJECT_DIR/k6.js"
+fi
+
 echo "=========================================================================="
 echo " [GERADOR DE CARGA K6]"
 echo " URL:            $TARGET_URL"
+echo " Script:         $K6_SCRIPT"
 echo " Workload:       $TARGET_WORKLOAD"
 echo " Taxa:           $TARGET_RATE req/s"
 echo " Duração:        ${TARGET_DURATION}s"
@@ -151,24 +146,11 @@ echo " Escala:         $TARGET_SCALE"
 echo " Resumo em:      $OUTPUT_SUMMARY"
 echo "=========================================================================="
 
-K6_SCRIPT="${K6_SCRIPT:-}"
-if [[ -z "$K6_SCRIPT" ]]; then
-  if [[ "$TARGET_WORKLOAD" == "librephotos" && -f "$PROJECT_DIR/librephotos-load-test.js" ]]; then
-    K6_SCRIPT="$PROJECT_DIR/librephotos-load-test.js"
-  elif [[ "$TARGET_WORKLOAD" == "bookstack" && -f "$PROJECT_DIR/load-test.js" ]]; then
-    K6_SCRIPT="$PROJECT_DIR/load-test.js"
-  else
-    K6_SCRIPT="$PROJECT_DIR/k6.js"
-  fi
-fi
-
 if [[ "$TARGET_WARMUP" -gt 0 ]]; then
   echo "==> Executando Warm-up de ${TARGET_WARMUP}s..."
   SUMMARY_PATH="/dev/null" \
   BASE_URL="$TARGET_URL" \
   WORKLOAD="$TARGET_WORKLOAD" \
-  WP_USER="$WP_USER" \
-  WP_PASS="$WP_PASS" \
   SCALE="$TARGET_SCALE" \
   RATE="$TARGET_RATE" \
   DURATION_SECONDS="$TARGET_WARMUP" \
@@ -181,10 +163,6 @@ echo "==> Iniciando teste de carga medido usando $K6_SCRIPT..."
 SUMMARY_PATH="$OUTPUT_SUMMARY" \
 BASE_URL="$TARGET_URL" \
 WORKLOAD="$TARGET_WORKLOAD" \
-WP_USER="$WP_USER" \
-WP_PASS="$WP_PASS" \
-LIBREPHOTOS_USER="$WP_USER" \
-LIBREPHOTOS_PASS="$WP_PASS" \
 SCALE="$TARGET_SCALE" \
 RATE="$TARGET_RATE" \
 DURATION_SECONDS="$TARGET_DURATION" \

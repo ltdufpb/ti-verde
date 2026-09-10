@@ -20,6 +20,7 @@ TARGET_BASELINE="${BASELINE_SECONDS:-15}"
 APPLICATION_PREFIX="${APPLICATION_PREFIX:-}"
 PROJECT_ROOT="${PROJECT_ROOT:-}"
 APP_CMD="${APP_CMD:-}"
+EXEC_CMD="${EXEC_CMD:-}"
 
 usage() {
   cat <<EOF
@@ -126,6 +127,10 @@ while [[ $# -gt 0 ]]; do
       APP_CMD="$2"
       shift 2
       ;;
+    --exec-cmd|--workload-cmd)
+      EXEC_CMD="$2"
+      shift 2
+      ;;
     --k6|--k6-summary)
       K6_SUMMARY="$2"
       shift 2
@@ -147,6 +152,8 @@ while [[ $# -gt 0 ]]; do
         HOST="${HOST:-$HOST}"
         PORT="${PORT:-$PORT}"
         BASE_URL="${BASE_URL:-$BASE_URL}"
+        EXEC_CMD="${EXEC_CMD:-$EXEC_CMD}"
+        PHP_VERSION="${PHP_VERSION:-}"
       fi
       shift 2
       ;;
@@ -249,6 +256,8 @@ case "$TARGET_LANG" in
     ;;
 esac
 
+touch "$PROFILER_FILE"
+
 if [[ -f "$CONFIG_FILE" ]]; then
   cp "$CONFIG_FILE" "$RUN_DIR/experiment.env"
 fi
@@ -285,10 +294,14 @@ case "$TARGET_LANG" in
       echo "async-profiler (asprof) não encontrado em $ASPROF. Execute measurement/install-tools-ubuntu.sh." >&2
       exit 1
     }
-    command -v jfr >/dev/null 2>&1 || {
-      echo "Comando 'jfr' não encontrado no PATH. Instale o OpenJDK (ex: default-jdk ou openjdk-21-jdk)." >&2
-      exit 1
-    }
+    if ! command -v jfr >/dev/null 2>&1; then
+      if [[ "$TARGET_MODE" == "container" && -n "$CONTAINER_NAME" ]] && docker exec "$CONTAINER_NAME" sh -c 'command -v jfr' >/dev/null 2>&1; then
+        echo "  [OK] JDK JFR CLI disponível dentro do container '$CONTAINER_NAME'."
+      else
+        echo "Comando 'jfr' não encontrado no PATH nem no container. Instale o OpenJDK (ex: sudo apt install openjdk-17-jdk-headless)." >&2
+        exit 1
+      fi
+    fi
     ;;
 esac
 
@@ -410,7 +423,8 @@ case "$TARGET_MODE" in
     fi
 
     echo "==> Identificando PID do container Docker '$CONTAINER_NAME'..."
-    TARGET_PID=$(sudo docker inspect -f '{{.State.Pid}}' "$CONTAINER_NAME" 2>/dev/null || docker inspect -f '{{.State.Pid}}' "$CONTAINER_NAME" 2>/dev/null || true)
+    CONTAINER_ROOT_PID=$(docker inspect -f '{{.State.Pid}}' "$CONTAINER_NAME" 2>/dev/null || sudo docker inspect -f '{{.State.Pid}}' "$CONTAINER_NAME" 2>/dev/null || true)
+    TARGET_PID="$CONTAINER_ROOT_PID"
     if [[ -z "$TARGET_PID" || "$TARGET_PID" -eq 0 ]]; then
       echo "Erro: Não foi possível obter o PID do container '$CONTAINER_NAME'. O container está rodando?" >&2
       exit 1
@@ -530,6 +544,10 @@ else
   echo "==> Baseline ignorado (0s)."
 fi
 
+if [[ -n "${EXEC_CMD:-}" && "$TARGET_DURATION" -eq 60 ]]; then
+  TARGET_DURATION=300
+fi
+
 COLLECTOR_TIMEOUT=$(
   python3 - <<PY
 print(int(${COLLECTOR_LEAD_SECONDS:-3}) + int(${TARGET_DURATION}) + int(${COLLECTOR_TAIL_SECONDS:-5}) + 8)
@@ -552,21 +570,54 @@ SCAPH_PID=$!
 case "$TARGET_LANG" in
   php)
     if [[ "$TARGET_MODE" == "container" || "$TARGET_MODE" == "docker" ]]; then
-      echo "==> Iniciando phpspy no modo pool/multi-processos (-P 'php-fpm|php')..."
-      sudo "$PHPSPY" \
-        -P "php-fpm|php" \
-        -T "${PHPSPY_THREADS:-16}" \
-        -H "${PHPSPY_RATE_HZ:-99}" \
-        -i "$COLLECTOR_TIMEOUT_MS" \
-        -d pt \
-        -J m \
-        -c \
-        -o "$PROFILER_FILE" \
-        2>"$PROFILER_ERR" &
-      PROFILER_PID=$!
+      PHPSPY_V_FLAG=()
+      DETECTED_PHP_VER="${PHP_VERSION:-}"
+      if [[ -z "$DETECTED_PHP_VER" && -n "$CONTAINER_NAME" ]]; then
+        DETECTED_PHP_VER=$(docker exec "$CONTAINER_NAME" php -r 'echo PHP_MAJOR_VERSION.PHP_MINOR_VERSION;' 2>/dev/null || true)
+      fi
+      if [[ -n "$DETECTED_PHP_VER" ]]; then
+        PHPSPY_V_FLAG=(-V "$DETECTED_PHP_VER")
+      fi
+
+      # Se um processo PHP específico foi identificado diretamente no container e é único, anexa diretamente via -p
+      PHP_PIDS_COUNT=$(docker top "$CONTAINER_NAME" -o pid,comm 2>/dev/null | awk '$2 ~ /^php/ { print $1 }' | wc -l || true)
+      if [[ "$PHP_PIDS_COUNT" -eq 1 && -n "$TARGET_PID" && "$TARGET_PID" -gt 0 ]]; then
+        echo "==> Processo PHP único detectado no container (PID $TARGET_PID). Anexando phpspy diretamente..."
+        sudo "$PHPSPY" \
+          "${PHPSPY_V_FLAG[@]}" \
+          -H "${PHPSPY_RATE_HZ:-99}" \
+          -i "$COLLECTOR_TIMEOUT_MS" \
+          -p "$TARGET_PID" \
+          -d pt \
+          -o "$PROFILER_FILE" \
+          2>"$PROFILER_ERR" &
+        PROFILER_PID=$!
+      else
+        CONTAINER_SHIM_PID=$(ps -o ppid= -p "${CONTAINER_ROOT_PID:-$TARGET_PID}" 2>/dev/null | tr -d ' ' || true)
+        if [[ -n "$CONTAINER_SHIM_PID" && "$CONTAINER_SHIM_PID" -gt 1 ]]; then
+          PGREP_TARGET="-P $CONTAINER_SHIM_PID php"
+        else
+          PGREP_TARGET="php"
+        fi
+
+        echo "==> Iniciando phpspy no modo container pool (${PHPSPY_V_FLAG[*]:-} -P '$PGREP_TARGET')..."
+        sudo "$PHPSPY" \
+          "${PHPSPY_V_FLAG[@]}" \
+          -P "$PGREP_TARGET" \
+          -T "${PHPSPY_THREADS:-16}" \
+          -H "${PHPSPY_RATE_HZ:-99}" \
+          -i "$COLLECTOR_TIMEOUT_MS" \
+          -d pt \
+          -J m \
+          -c \
+          -o "$PROFILER_FILE" \
+          2>"$PROFILER_ERR" &
+        PROFILER_PID=$!
+      fi
     else
       echo "==> Iniciando phpspy no PID $TARGET_PID..."
       sudo "$PHPSPY" \
+        ${PHPSPY_V_FLAG[@]:-} \
         -H "${PHPSPY_RATE_HZ:-99}" \
         -i "$COLLECTOR_TIMEOUT_MS" \
         -p "$TARGET_PID" \
@@ -638,10 +689,21 @@ echo "   ./run-load-test.sh"
 echo "=========================================================================="
 echo ""
 
-echo "Aguardando janela de medição (${TARGET_DURATION}s)..."
-sleep "$TARGET_DURATION"
-
-END_TS="$(python3 -c 'import time; print(time.time())')"
+if [[ -n "${EXEC_CMD:-}" ]]; then
+  echo "==> Executando carga / comando de teste:"
+  echo "    $EXEC_CMD"
+  echo "=========================================================================="
+  eval "$EXEC_CMD" || true
+  END_TS="$(python3 -c 'import time; print(time.time())')"
+  echo ""
+  echo "==> Comando concluído. Encerrando coletores de energia..."
+  [[ -n "$SCAPH_PID" ]] && sudo kill -INT "$SCAPH_PID" 2>/dev/null || true
+  [[ -n "$PROFILER_PID" ]] && sudo kill -INT "$PROFILER_PID" 2>/dev/null || true
+else
+  echo "Aguardando janela de medição (${TARGET_DURATION}s)..."
+  sleep "$TARGET_DURATION"
+  END_TS="$(python3 -c 'import time; print(time.time())')"
+fi
 
 # Grava janela de medição
 python3 - "$WINDOW_FILE" "$START_TS" "$END_TS" "$TARGET_PID" "$TARGET_LANG" "$TARGET_MODE" <<'PY'

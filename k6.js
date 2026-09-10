@@ -6,14 +6,11 @@ const successfulRequests = new Counter("successful_requests");
 const failedRequests = new Counter("failed_requests");
 
 const baseUrl = __ENV.BASE_URL || "http://127.0.0.1:8080";
-const workload = __ENV.WORKLOAD || "wordpress";
+const workload = __ENV.WORKLOAD || "mixed";
 const scale = __ENV.SCALE || "1";
 const rate = Number(__ENV.RATE || 2);
 const durationSeconds = Number(__ENV.DURATION_SECONDS || 60);
 const summaryPath = __ENV.SUMMARY_PATH || "results/k6-summary.json";
-
-const wpUser = __ENV.WP_USER || "marcos";
-const wpPass = __ENV.WP_PASS || "Teste1234";
 
 export const options = {
   discardResponseBodies: false,
@@ -35,79 +32,28 @@ export const options = {
 };
 
 export default function () {
-  if (workload === "wordpress" || workload === "login") {
-    const jar = http.cookieJar();
-    jar.clear(baseUrl);
+  // Workload sintético embutido nos servidores de teste (public/index.php,
+  // scripts/python-server.py, scripts/JavaServer.java): cpu, text, crud ou mixed.
+  // Use este script apenas para validar a cadeia de medição de ponta a ponta;
+  // para medir uma aplicação real, aponte --script para um k6
+  // customizado que exercite as rotas reais dessa aplicação.
+  const url =
+    `${baseUrl}/work` +
+    `?workload=${encodeURIComponent(workload)}` +
+    `&scale=${encodeURIComponent(scale)}`;
 
-    // 1. Acessa a página de login
-    http.get(`${baseUrl}/wp-login.php`);
+  const response = http.get(url);
+  const ok = response.status === 200;
 
-    // 2. Realiza o login via POST
-    const loginPayload = {
-      log: wpUser,
-      pwd: wpPass,
-      "wp-submit": "Log In",
-      redirect_to: `${baseUrl}/wp-admin/`,
-    };
-
-    const loginRes = http.post(`${baseUrl}/wp-login.php`, loginPayload, {
-      redirects: 1,
-    });
-
-    const loginOk = loginRes.status === 200 || loginRes.status === 302;
-
-    // 3. Acessa o painel admin como usuário autenticado
-    const adminRes = http.get(`${baseUrl}/wp-admin/`);
-    const adminOk = adminRes.status === 200;
-
-    // 4. Executa o logout via nonce ou limpa os cookies da sessão
-    const logoutMatch = adminRes.body
-      ? adminRes.body.match(/action=logout&amp;_wpnonce=([a-z0-9]+)/)
-      : null;
-    let logoutOk = true;
-
-    if (logoutMatch && logoutMatch[1]) {
-      const logoutNonce = logoutMatch[1];
-      const logoutRes = http.get(
-        `${baseUrl}/wp-login.php?action=logout&_wpnonce=${logoutNonce}`
-      );
-      logoutOk = logoutRes.status === 200 || logoutRes.status === 302;
-    }
-
-    jar.clear(baseUrl);
-
-    const overallOk = loginOk && adminOk && logoutOk;
-
-    if (overallOk) {
-      successfulRequests.add(1);
-    } else {
-      failedRequests.add(1);
-    }
-
-    check(loginRes, {
-      "login WordPress com sucesso": () => loginOk,
-      "painel admin acessível": () => adminOk,
-    });
+  if (ok) {
+    successfulRequests.add(1);
   } else {
-    // Workloads sintéticos (cpu, text, mixed)
-    const url =
-      `${baseUrl}/work` +
-      `?workload=${encodeURIComponent(workload)}` +
-      `&scale=${encodeURIComponent(scale)}`;
-
-    const response = http.get(url);
-    const ok = response.status === 200;
-
-    if (ok) {
-      successfulRequests.add(1);
-    } else {
-      failedRequests.add(1);
-    }
-
-    check(response, {
-      "status is 200": () => ok,
-    });
+    failedRequests.add(1);
   }
+
+  check(response, {
+    "status is 200": () => ok,
+  });
 }
 
 function metricValue(data, metric, field, fallback = 0) {

@@ -1,13 +1,14 @@
 # Resultados gerados de medição
 results/*
 !results/.gitkeep
-*.log
 
-# Caches e arquivos temporários
+# Ferramentas de terceiros baixadas por measurement/install-tools-ubuntu.sh
+tools/*
+!tools/.gitkeep
+
+# Caches, logs e arquivos temporários
 __pycache__/
 *.pyc
 .venv/
-results/
-tools/
-cases/
+*.log
 *.jfr

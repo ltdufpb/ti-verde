@@ -225,6 +225,8 @@ def clean_frame_name(name: str) -> str:
 
 
 def parse_phpspy(path: Path, project_root: Path | None = None) -> list[StackSample]:
+    if not path.exists():
+        return []
     samples: list[StackSample] = []
     frames: list[tuple[int, str]] = []
     timestamp: float | None = None
@@ -394,18 +396,39 @@ def generate_svg(
     title: str,
     count_name: str,
 ) -> None:
-    with output.open("wb") as destination:
-        subprocess.run(
-            [
-                "perl",
-                str(flamegraph_script),
-                f"--title={title}",
-                f"--countname={count_name}",
-                str(folded),
-            ],
-            check=True,
-            stdout=destination,
+    if not folded.exists() or folded.stat().st_size == 0:
+        placeholder = (
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="600" height="80">'
+            f'<rect width="100%" height="100%" fill="#f8f9fa"/>'
+            f'<text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" '
+            f'fill="#6c757d" font-family="sans-serif" font-size="14">'
+            f'Nenhuma amostra de stack trace capturada para {title}</text></svg>'
         )
+        output.write_text(placeholder, encoding="utf-8")
+        return
+
+    with output.open("wb") as destination:
+        try:
+            subprocess.run(
+                [
+                    "perl",
+                    str(flamegraph_script),
+                    f"--title={title}",
+                    f"--countname={count_name}",
+                    str(folded),
+                ],
+                check=True,
+                stdout=destination,
+            )
+        except subprocess.CalledProcessError as err:
+            output.write_text(
+                f'<svg xmlns="http://www.w3.org/2000/svg" width="600" height="80">'
+                f'<rect width="100%" height="100%" fill="#fff3cd"/>'
+                f'<text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" '
+                f'fill="#856404" font-family="sans-serif" font-size="14">'
+                f'Flamegraph falhou: {err}</text></svg>',
+                encoding="utf-8",
+            )
 
 
 def validate_scaphandre(path: Path) -> None:
